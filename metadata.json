@@ -1,0 +1,6 @@
+{
+  "name": "Catálogo Virtual",
+  "description": "Catálogo virtual de tienda con panel de administración para gestionar productos, SKU, precios de unidad/mayorista, fotos, videos e información de contacto.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

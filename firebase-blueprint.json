@@ -1,0 +1,117 @@
+{
+  "entities": {
+    "StoreConfig": {
+      "title": "Configuración de Tienda",
+      "description": "Configuraciones del catálogo de la tienda e información de contacto",
+      "type": "object",
+      "properties": {
+        "storeName": {
+          "type": "string",
+          "description": "Nombre de la tienda"
+        },
+        "address": {
+          "type": "string",
+          "description": "Dirección física de la tienda"
+        },
+        "phone": {
+          "type": "string",
+          "description": "Teléfono de contacto"
+        },
+        "whatsappNumber": {
+          "type": "string",
+          "description": "Número de WhatsApp con código de país"
+        },
+        "whatsappCustomMessage": {
+          "type": "string",
+          "description": "Mensaje predefinido para enviar por WhatsApp"
+        },
+        "locationUrl": {
+          "type": "string",
+          "description": "Enlace de Google Maps para la dirección física"
+        },
+        "showPrices": {
+          "type": "boolean",
+          "description": "Controla si se muestran o se ocultan los precios a los clientes"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Última fecha de actualización"
+        }
+      },
+      "required": ["storeName", "showPrices"]
+    },
+    "Product": {
+      "title": "Producto del Catálogo",
+      "description": "Ficha y detalles de un producto en el catálogo",
+      "type": "object",
+      "properties": {
+        "sku": {
+          "type": "string",
+          "description": "Código identificador SKU único del producto"
+        },
+        "name": {
+          "type": "string",
+          "description": "Nombre comercial del producto"
+        },
+        "description": {
+          "type": "string",
+          "description": "Descripción amplia y destalle del producto"
+        },
+        "category": {
+          "type": "string",
+          "description": "Categoría para organizar el catálogo"
+        },
+        "retailPrice": {
+          "type": "number",
+          "description": "Precio de venta por unidad o al por menor"
+        },
+        "wholesalePrice": {
+          "type": "number",
+          "description": "Precio de venta al por mayor"
+        },
+        "images": {
+          "type": "array",
+          "description": "Lista de URLs de imágenes del producto"
+        },
+        "videoUrl": {
+          "type": "string",
+          "description": "URL de video de demostración (YouTube/Vimeo o enlace directo)"
+        },
+        "isAvailable": {
+          "type": "boolean",
+          "description": "Indica si el producto está disponible en stock"
+        },
+        "views": {
+          "type": "number",
+          "description": "Contador de vistas o visitas al producto"
+        },
+        "whatsappClicks": {
+          "type": "number",
+          "description": "Contador de consultas o clicks de redirección a WhatsApp"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Fecha de registro"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Fecha de actualización"
+        }
+      },
+      "required": ["name", "sku"]
+    }
+  },
+  "firestore": {
+    "/storeConfig/{docId}": {
+      "schema": "StoreConfig",
+      "description": "Datos dinámicos de contacto y configuración visual de la tienda"
+    },
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Colección de productos expuestos en el catálogo virtual"
+    }
+  }
+}

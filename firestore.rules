@@ -1,0 +1,85 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net - deny all by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+    
+    // Global Security Primitives
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+    function incoming() {
+      return request.resource.data;
+    }
+    function existing() {
+      return resource.data;
+    }
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    // Admin access validation: matches robymetalero@gmail.com with verified email or matching admins document
+    function isAdmin() {
+      return isSignedIn() && (
+        (request.auth.token.email == "robymetalero@gmail.com" && request.auth.token.email_verified == true) ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // Admin Metadata Collection
+    match /admins/{adminId} {
+      allow read: if isSignedIn();
+      allow write: if false; // Admins cannot self-register, must be set up through standard backend or console
+    }
+
+    // Store Configuration Collection (single doc: 'default' or similar)
+    match /storeConfig/{docId} {
+      allow read: if true;
+      allow create: if isAdmin() && isValidId(docId) && isValidStoreConfig(incoming());
+      allow update: if isAdmin() && isValidId(docId) && isValidStoreConfig(incoming());
+      allow delete: if isAdmin();
+    }
+
+    // Catalog Products Collection
+    match /products/{productId} {
+      allow read: if true;
+      allow create: if isAdmin() && isValidId(productId) && isValidProduct(incoming()) && incoming().createdAt is timestamp;
+      allow update: if (isAdmin() && isValidId(productId) && isValidProduct(incoming()) && incoming().createdAt == existing().createdAt && incoming().updatedAt is timestamp) ||
+                    (isValidId(productId) && incoming().diff(existing()).affectedKeys().hasOnly(['views', 'whatsappClicks']) &&
+                     (!('views' in incoming()) || (incoming().views is number)) &&
+                     (!('whatsappClicks' in incoming()) || (incoming().whatsappClicks is number)));
+      allow delete: if isAdmin();
+    }
+
+    // Helper validation functions
+    function isValidStoreConfig(data) {
+      return data.keys().hasAll(['storeName', 'showPrices']) &&
+             data.storeName is string && data.storeName.size() <= 100 &&
+             data.showPrices is bool &&
+             (!('address' in data) || (data.address is string && data.address.size() <= 250)) &&
+             (!('phone' in data) || (data.phone is string && data.phone.size() <= 30)) &&
+             (!('whatsappNumber' in data) || (data.whatsappNumber is string && data.whatsappNumber.size() <= 30)) &&
+             (!('whatsappCustomMessage' in data) || (data.whatsappCustomMessage is string && data.whatsappCustomMessage.size() <= 500)) &&
+             (!('locationUrl' in data) || (data.locationUrl is string && data.locationUrl.size() <= 1000)) &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp);
+    }
+
+    function isValidProduct(data) {
+      return data.keys().hasAll(['name', 'sku']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 150 &&
+             data.sku is string && data.sku.size() > 0 && data.sku.size() <= 50 &&
+             (!('description' in data) || (data.description is string && data.description.size() <= 5000)) &&
+             (!('category' in data) || (data.category is string && data.category.size() <= 100)) &&
+             (!('retailPrice' in data) || (data.retailPrice is number && data.retailPrice >= 0)) &&
+             (!('wholesalePrice' in data) || (data.wholesalePrice is number && data.wholesalePrice >= 0)) &&
+             (!('images' in data) || (data.images is list && data.images.size() <= 10 && (data.images.size() == 0 || data.images[0] is string))) &&
+             (!('videoUrl' in data) || (data.videoUrl is string && data.videoUrl.size() <= 1000)) &&
+             (!('isAvailable' in data) || data.isAvailable is bool) &&
+             (!('views' in data) || (data.views is number && data.views >= 0)) &&
+             (!('whatsappClicks' in data) || (data.whatsappClicks is number && data.whatsappClicks >= 0)) &&
+             (!('createdAt' in data) || data.createdAt is timestamp) &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp);
+    }
+  }
+}
