@@ -8,10 +8,18 @@ async function startServer() {
   const app = express();
   const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
-  // Create absolute public/uploads path
-  const uploadDir = path.join(process.cwd(), "public", "uploads");
-  if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
+  // Create absolute uploads path with a robust fallback for read-only filesystem environments (like standard Cloud Run containers)
+  let uploadDir = path.join(process.cwd(), "public", "uploads");
+  try {
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+  } catch (error) {
+    console.warn("No se pudo crear el directorio local 'public/uploads' (posible sistema de archivos de solo lectura). Usando '/tmp/uploads' como fallback:", error);
+    uploadDir = path.join("/tmp", "uploads");
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
   }
 
   // Multer Storage Setup
@@ -40,7 +48,7 @@ async function startServer() {
   app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
   // Expose virtual directory /uploads to resolve static files correctly
-  app.use("/uploads", express.static(path.join(process.cwd(), "public", "uploads")));
+  app.use("/uploads", express.static(uploadDir));
 
   // Multi-file upload api route (images and videos)
   app.post("/api/upload", upload.array("files", 12), (req: any, res: any) => {
