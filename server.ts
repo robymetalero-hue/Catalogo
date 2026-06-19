@@ -74,6 +74,20 @@ async function startServer() {
     })
   );
 
+  // Helper to guarantee an asynchronous call completes or times out to prevent HTTP request hang ups
+  const runWithTimeout = <T>(promise: Promise<T>, ms: number, fallbackLabel: string): Promise<T> => {
+    let timer: NodeJS.Timeout;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error(`Timeout limit of ${ms}ms exceeded for ${fallbackLabel}`));
+      }, ms);
+    });
+    return Promise.race([
+      promise.finally(() => clearTimeout(timer)),
+      timeoutPromise
+    ]);
+  };
+
   // Multi-file upload api route (images and videos) with optional GCS upload pipelines
   app.post("/api/upload", upload.array("files", 12), async (req: any, res: any) => {
     try {
@@ -87,25 +101,30 @@ async function startServer() {
       for (const file of files) {
         if (gcsBucket) {
           try {
-            console.log(`[Google Cloud] Subiendo "${file.filename}" a GCS...`);
+            console.log(`[Google Cloud] Subiendo "${file.filename}" a GCS con un límite de espera de 2.5s...`);
             const gcsFile = gcsBucket.file(file.filename);
-            await gcsBucket.upload(file.path, {
-              destination: file.filename,
-              metadata: {
-                contentType: file.mimetype,
-                cacheControl: "public, max-age=31536000", // cache aggressively on GCS EDGE CDN
-              },
-            });
+            
+            // Run the bucket upload with a fast 2500ms timeout limit
+            await runWithTimeout(
+              gcsBucket.upload(file.path, {
+                destination: file.filename,
+                metadata: {
+                  contentType: file.mimetype,
+                  cacheControl: "public, max-age=31536000", // cache aggressively on GCS EDGE CDN
+                },
+              }),
+              2500,
+              "GCS file upload"
+            );
 
             try {
-              // Explicitly make public to guarantee other users and catalog visitors can view the assets fully
-              await gcsFile.makePublic();
-            } catch (aclErr) {
-              console.warn("[Google Cloud] Could not alter ACL/make file public (Normal if Uniform Bucket Access is active):", aclErr);
+              // Explicitly make public with a 1sec timeout
+              await runWithTimeout(gcsFile.makePublic(), 1000, "GCS makePublic");
+            } catch (aclErr: any) {
+              console.warn("[Google Cloud] Could not alter ACL/make file public (Normal if Uniform Bucket Access is active):", aclErr.message || aclErr);
             }
 
-            // Make the file public by default if permissions allow, or construct a generic URL.
-            // On standard public buckets, this direct URL retrieves the file instantly with no performance delay.
+            // Construct generic public URL of standard public buckets
             const publicUrl = `https://storage.googleapis.com/${gcsBucketName}/${file.filename}`;
             urls.push(publicUrl);
 
@@ -115,9 +134,9 @@ async function startServer() {
             } catch (unlinkErr) {
               console.warn("Fallo temporal limpiando archivo local:", unlinkErr);
             }
-          } catch (gcsUploadErr) {
-            console.error(`[Google Cloud] Desvío de emergencia cargando a GCS, usando local:`, gcsUploadErr);
-            // Fallback to local URL if GCS fails to avoid breaking user workflows
+          } catch (gcsUploadErr: any) {
+            console.warn(`[Google Cloud] Desvío de emergencia cargando a GCS (usando local): ${gcsUploadErr.message || gcsUploadErr}`);
+            // Fallback to local URL if GCS fails or times out to avoid breaking user workflows
             urls.push(`/uploads/${file.filename}`);
           }
         } else {

@@ -93,7 +93,7 @@ export default function App() {
         }
       }
     } catch (e) {}
-    return DEMO_PRODUCTS;
+    return [];
   });
   const [storeConfig, setStoreConfig] = useState<StoreConfig>(() => {
     try {
@@ -113,7 +113,7 @@ export default function App() {
           if (Array.isArray(parsed) && parsed.length > 0) return parsed;
         }
       } catch (e) {}
-      return DEMO_PRODUCTS;
+      return [];
     })();
     const cats = Array.from(new Set(initialProducts.map((item) => item.category).filter(Boolean)));
     return ["Todos", ...cats];
@@ -276,8 +276,7 @@ export default function App() {
       await refreshAll();
     } catch (err) {
       console.warn("Could not auto-seed demo products because of API or Postgres constraints.", err);
-      // fallback to offline products state
-      setProducts(DEMO_PRODUCTS);
+      setProducts([]);
       setLoadingApp(false);
     }
   };
@@ -300,10 +299,8 @@ export default function App() {
       console.warn("Could not load products from local cache:", e);
     }
 
-    // fallback to static demo products
-    setProducts(DEMO_PRODUCTS);
-    const cats = Array.from(new Set(DEMO_PRODUCTS.map((item) => item.category).filter(Boolean)));
-    setCategories(["Todos", ...cats]);
+    setProducts([]);
+    setCategories(["Todos"]);
     setLoadingApp(false);
   };
 
