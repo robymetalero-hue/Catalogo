@@ -4,7 +4,7 @@ import fs from "fs";
 import multer from "multer";
 import { createServer as createViteServer } from "vite";
 import { Storage } from "@google-cloud/storage";
-import { db } from "./src/db/index.ts";
+import { db, withDBRetry } from "./src/db/index.ts";
 import { products, storeConfig } from "./src/db/schema.ts";
 import { eq, desc } from "drizzle-orm";
 
@@ -191,7 +191,7 @@ async function startServer() {
   // Obtener configuración de la tienda
   app.get("/api/store-config", async (req, res) => {
     try {
-      const config = await db.select().from(storeConfig).where(eq(storeConfig.id, "default")).limit(1);
+      const config = await withDBRetry(() => db.select().from(storeConfig).where(eq(storeConfig.id, "default")).limit(1));
       if (config.length === 0) {
         // Sembrar valores por defecto si no existen
         const defaultDoc = {
@@ -205,13 +205,13 @@ async function startServer() {
           showPrices: true,
           updatedAt: new Date()
         };
-        const inserted = await db.insert(storeConfig).values(defaultDoc).returning();
+        const inserted = await withDBRetry(() => db.insert(storeConfig).values(defaultDoc).returning());
         return res.json(inserted[0]);
       }
       return res.json(config[0]);
-    } catch (error) {
-      console.error("Error guardando el store-config:", error);
-      return res.status(500).json({ error: "Error de base de datos cargando configuración de la tienda." });
+    } catch (error: any) {
+      console.error("Error cargando el store-config:", error);
+      return res.status(500).json({ error: "Error de base de datos cargando configuración de la tienda: " + (error.message || error) });
     }
   });
 
@@ -219,7 +219,7 @@ async function startServer() {
   app.post("/api/store-config", async (req, res) => {
     try {
       const payload = req.body;
-      const updated = await db.insert(storeConfig).values({
+      const updated = await withDBRetry(() => db.insert(storeConfig).values({
         id: "default",
         storeName: payload.storeName || "Mi Catálogo de WhatsApp",
         address: payload.address || "",
@@ -241,18 +241,18 @@ async function startServer() {
           showPrices: payload.showPrices ?? true,
           updatedAt: new Date()
         }
-      }).returning();
+      }).returning());
       return res.json(updated[0]);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error actualizando store-config:", error);
-      return res.status(500).json({ error: "Error de base de datos actualizando configuración de la tienda." });
+      return res.status(500).json({ error: "Error de base de datos actualizando configuración de la tienda: " + (error.message || error) });
     }
   });
 
   // Obtener todos los productos
   app.get("/api/products", async (req, res) => {
     try {
-      const allProducts = await db.select().from(products).orderBy(desc(products.createdAt));
+      const allProducts = await withDBRetry(() => db.select().from(products).orderBy(desc(products.createdAt)));
       return res.json(allProducts);
     } catch (error: any) {
       console.error("Error obteniendo productos:", error);
@@ -265,7 +265,7 @@ async function startServer() {
     try {
       const p = req.body;
       const id = p.id || `prod_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      const result = await db.insert(products).values({
+      const result = await withDBRetry(() => db.insert(products).values({
         id,
         sku: p.sku || "",
         name: p.name || "Sin nombre",
@@ -280,7 +280,7 @@ async function startServer() {
         whatsappClicks: p.whatsappClicks || 0,
         createdAt: new Date(),
         updatedAt: new Date(),
-      }).returning();
+      }).returning());
       return res.json(result[0]);
     } catch (error: any) {
       console.error("Error creando producto:", error);
@@ -293,7 +293,7 @@ async function startServer() {
     try {
       const { id } = req.params;
       const p = req.body;
-      const result = await db.update(products).set({
+      const result = await withDBRetry(() => db.update(products).set({
         sku: p.sku,
         name: p.name,
         description: p.description,
@@ -306,7 +306,7 @@ async function startServer() {
         views: p.views,
         whatsappClicks: p.whatsappClicks,
         updatedAt: new Date(),
-      }).where(eq(products.id, id)).returning();
+      }).where(eq(products.id, id)).returning());
       
       if (result.length === 0) {
         return res.status(404).json({ error: "Producto no encontrado." });
@@ -322,7 +322,7 @@ async function startServer() {
   app.delete("/api/products/:id", async (req, res) => {
     try {
       const { id } = req.params;
-      const result = await db.delete(products).where(eq(products.id, id)).returning();
+      const result = await withDBRetry(() => db.delete(products).where(eq(products.id, id)).returning());
       if (result.length === 0) {
         return res.status(404).json({ error: "Producto no encontrado." });
       }
@@ -343,7 +343,7 @@ async function startServer() {
       
       const inserted = [];
       for (const p of list) {
-        const row = await db.insert(products).values({
+        const row = await withDBRetry(() => db.insert(products).values({
           id: p.id,
           sku: p.sku || "",
           name: p.name || "",
@@ -372,13 +372,13 @@ async function startServer() {
             isAvailable: p.isAvailable ?? true,
             updatedAt: new Date(),
           }
-        }).returning();
+        }).returning());
         inserted.push(row[0]);
       }
       return res.json(inserted);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error sembrando productos:", error);
-      return res.status(500).json({ error: "Error de base de datos sembrando productos." });
+      return res.status(500).json({ error: "Error de base de datos sembrando productos: " + (error.message || error) });
     }
   });
 

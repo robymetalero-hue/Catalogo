@@ -288,7 +288,10 @@ export default function AdminPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updatedData)
       });
-      if (!res.ok) throw new Error("Fallo en la llamada API a Google Cloud PostgreSQL");
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Fallo en la llamada API a Google Cloud PostgreSQL");
+      }
       showToast("Configuración general guardada exitosamente en Google Cloud SQL");
       onRefreshConfig(); // Sincroniza la información real desde la BD
     } catch (error: any) {
