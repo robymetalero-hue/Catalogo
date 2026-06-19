@@ -13,7 +13,7 @@ import {
   ref, uploadBytes, getDownloadURL 
 } from "firebase/storage";
 import { 
-  Store, Plus, Edit2, Trash2, Save, X, Eye, EyeOff, Video, Link, Check, Image as ImageIcon, Sparkles, FolderPlus, Phone, TrendingUp, ThumbsUp, BarChart2, Upload 
+  Store, Plus, Edit2, Trash2, Save, X, Eye, EyeOff, Video, Link, Check, Image as ImageIcon, Sparkles, FolderPlus, Phone, TrendingUp, ThumbsUp, BarChart2, Upload, CloudUpload, RefreshCw
 } from "lucide-react";
 
 interface AdminPanelProps {
@@ -100,6 +100,35 @@ export default function AdminPanel({
   const showToast = (text: string, type: "success" | "error" = "success") => {
     setMessage({ text, type });
     setTimeout(() => setMessage(null), 4000);
+  };
+
+  const [syncingCloud, setSyncingCloud] = useState(false);
+
+  const handleSyncLocalWithCloud = async () => {
+    if (products.length === 0) {
+      showToast("No hay productos en el catálogo para sincronizar", "error");
+      return;
+    }
+    setSyncingCloud(true);
+    try {
+      showToast("Sincronizando productos locales con la base de datos de la nube...");
+      const res = await fetch("/api/products/seed", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(products)
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Fallo en la llamada API de sincronización");
+      }
+      showToast("¡Sincronización exitosa! Los productos ya están disponibles en todos los dispositivos.");
+      onRefreshProducts();
+    } catch (error: any) {
+      console.error("Error al sincronizar con Cloud SQL:", error);
+      showToast(`Error al sincronizar con la nube: ${error.message || error}`, "error");
+    } finally {
+      setSyncingCloud(false);
+    }
   };
 
   // Highly professional client-side image compression to support massive mega-pixel files
@@ -953,15 +982,34 @@ export default function AdminPanel({
             </div>
           </div>
 
-          <div className="flex justify-between items-center bg-white p-4 rounded-xl border border-slate-200 shadow-3xs gap-4">
-            <span className="text-sm font-semibold text-slate-700">Tienes {products.length} productos en el catálogo</span>
-            <button
-              onClick={handleOpenCreateProduct}
-              className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-semibold transition-all shadow-md shadow-amber-500/15 flex items-center gap-1 shrink-0"
-            >
-              <Plus size={14} />
-              <span>Agregar Producto</span>
-            </button>
+          <div className="flex flex-col md:flex-row md:items-center justify-between bg-white p-4 rounded-xl border border-slate-200 shadow-3xs gap-4">
+            <div className="flex flex-col gap-0.5">
+              <span className="text-sm font-semibold text-slate-700">Tienes {products.length} productos en el catálogo</span>
+              <span className="text-xs text-slate-400">Si tus clientes no pueden ver tus artículos desde otros dispositivos, usa "Sincronizar" para subirlos a la base de datos de la nube.</span>
+            </div>
+            
+            <div className="flex items-center gap-2">
+              {products.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleSyncLocalWithCloud}
+                  disabled={syncingCloud}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-semibold transition-all shadow-md shadow-emerald-500/15 flex items-center gap-1.5 shrink-0 cursor-pointer"
+                  title="Sincroniza y fuerza la subida de todos tus productos hacia Google Cloud para que estén accesibles desde cualquier dispositivo."
+                >
+                  <CloudUpload size={14} className={syncingCloud ? "animate-bounce" : ""} />
+                  <span>{syncingCloud ? "Sincronizando..." : "Sincronizar con la Nube"}</span>
+                </button>
+              )}
+
+              <button
+                onClick={handleOpenCreateProduct}
+                className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-semibold transition-all shadow-md shadow-amber-500/15 flex items-center gap-1 shrink-0 cursor-pointer"
+              >
+                <Plus size={14} />
+                <span>Agregar Producto</span>
+              </button>
+            </div>
           </div>
 
           <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
