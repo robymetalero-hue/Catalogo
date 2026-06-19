@@ -16,8 +16,11 @@ import {
 interface AdminPanelProps {
   products: Product[];
   storeConfig: StoreConfig;
+  setProducts: React.Dispatch<React.SetStateAction<Product[]>>;
+  setStoreConfig: React.Dispatch<React.SetStateAction<StoreConfig>>;
   onRefreshProducts: () => void;
   onRefreshConfig: () => void;
+  onSeedDemo?: () => void;
 }
 
 const CATEGORY_PRESETS = ["Calzado", "Ropa", "Accesorios", "Hogar", "Tecnología", "Salud y Belleza", "Deportes", "Otros"];
@@ -25,8 +28,11 @@ const CATEGORY_PRESETS = ["Calzado", "Ropa", "Accesorios", "Hogar", "Tecnología
 export default function AdminPanel({
   products,
   storeConfig,
+  setProducts,
+  setStoreConfig,
   onRefreshProducts,
   onRefreshConfig,
+  onSeedDemo,
 }: AdminPanelProps) {
   // Calculated engagement metrics for User Feedback & Interest Dashboard
   const totalViews = products.reduce((acc, p) => acc + (p.views || 0), 0);
@@ -95,6 +101,73 @@ export default function AdminPanel({
     setTimeout(() => setMessage(null), 4000);
   };
 
+  // Client-side image compression to convert images to highly optimized 1200px JPEG files
+  const compressImage = (file: File): Promise<File> => {
+    return new Promise<File>((resolve) => {
+      // Non-images (like mp4 videos) are forwarded directly with zero delay
+      if (!file.type.startsWith("image/")) {
+        resolve(file);
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+          // Max boundaries of 1200px (high-fidelity retina standard but extreme speed)
+          const MAX_WIDTH = 1200;
+          const MAX_HEIGHT = 1200;
+          let width = img.width;
+          let height = img.height;
+
+          if (width > MAX_WIDTH || height > MAX_HEIGHT) {
+            if (width > height) {
+              height = Math.round((height * MAX_WIDTH) / width);
+              width = MAX_WIDTH;
+            } else {
+              width = Math.round((width * MAX_HEIGHT) / height);
+              height = MAX_HEIGHT;
+            }
+          }
+
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            resolve(file);
+            return;
+          }
+
+          // Draw the image onto the scaling canvas
+          ctx.drawImage(img, 0, 0, width, height);
+
+          // Render canvas to blob with 82% quality to maximize bandwidth savings (averages ~100-200kb total)
+          canvas.toBlob(
+            (blob) => {
+              if (!blob) {
+                resolve(file);
+                return;
+              }
+              const compressedFile = new File([blob], file.name.replace(/\.[^/.]+$/, "") + ".jpg", {
+                type: "image/jpeg",
+                lastModified: Date.now(),
+              });
+              resolve(compressedFile);
+            },
+            "image/jpeg",
+            0.82
+          );
+        };
+        img.onerror = () => resolve(file);
+        img.src = event.target?.result as string;
+      };
+      reader.onerror = () => resolve(file);
+      reader.readAsDataURL(file);
+    });
+  };
+
   // Media upload handler for PC / Android files selecting multiple at once
   const handleMediaUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -103,12 +176,16 @@ export default function AdminPanel({
     setUploadingMedia(true);
     setUploadError("");
 
-    const formData = new FormData();
-    for (let i = 0; i < files.length; i++) {
-      formData.append("files", files[i]);
-    }
-
     try {
+      // Compress all files concurrently to keep UI responsive
+      const originalFilesList = Array.from(files) as File[];
+      const processedFilesList = await Promise.all(originalFilesList.map((f: File) => compressImage(f)));
+
+      const formData = new FormData();
+      processedFilesList.forEach((file) => {
+        formData.append("files", file);
+      });
+
       const response = await fetch("/api/upload", {
         method: "POST",
         body: formData,
@@ -166,25 +243,31 @@ export default function AdminPanel({
     e.preventDefault();
     setLoading(true);
     const path = "storeConfig/default";
+    
+    const updatedData: StoreConfig = {
+      storeName: storeName.trim(),
+      address: address.trim(),
+      phone: phone.trim(),
+      whatsappNumber: whatsappNumber.trim().replace(/[^0-9]/g, ""), // clean number
+      whatsappCustomMessage: whatsappCustomMessage.trim(),
+      locationUrl: locationUrl.trim(),
+      showPrices: !!showPrices,
+      updatedAt: new Date()
+    };
+
+    // UPDATE LOCAL STATE / CACHE INSTANTLY (IMMEDIATE REACTION)
+    setStoreConfig(updatedData);
+    try {
+      localStorage.setItem("local_store_config_cache", JSON.stringify(updatedData));
+    } catch (err) {}
+
     try {
       const configRef = doc(db, "storeConfig", "default");
-      const updatedData = {
-        storeName: storeName.trim(),
-        address: address.trim(),
-        phone: phone.trim(),
-        whatsappNumber: whatsappNumber.trim().replace(/[^0-9]/g, ""), // clean number
-        whatsappCustomMessage: whatsappCustomMessage.trim(),
-        locationUrl: locationUrl.trim(),
-        showPrices: !!showPrices,
-        updatedAt: new Date()
-      };
-
       await setDoc(configRef, updatedData);
       showToast("Configuración general guardada exitosamente");
-      onRefreshConfig();
     } catch (error) {
-      showToast("Error al guardar la configuración: " + (error as Error).message, "error");
-      handleFirestoreError(error, OperationType.WRITE, path);
+      console.warn("Could not save to Firestore, local state preserved:", error);
+      showToast("Guardado localmente. (Error al sincronizar con la nube)", "success");
     } finally {
       setLoading(false);
     }
@@ -268,14 +351,65 @@ export default function AdminPanel({
       );
 
     const finalCategory = category === "Custom" ? newCustomCategory.trim() : category;
+    const currentTime = new Date();
+
+    let updatedProductsList: Product[] = [];
+    let savedMsg = "";
+
+    if (editingProductId) {
+      // Edit flow
+      const updatedItemFields = {
+        sku: sku.trim(),
+        name: name.trim(),
+        description: description.trim(),
+        category: finalCategory || "Otros",
+        retailPrice: Number(retailPrice) || 0,
+        wholesalePrice: Number(wholesalePrice) || 0,
+        images: filteredImages,
+        videoUrl: videoUrl.trim(),
+        isAvailable: !!isAvailable,
+        updatedAt: currentTime
+      };
+
+      updatedProductsList = products.map((p) => 
+        p.id === id ? { ...p, ...updatedItemFields } : p
+      );
+      savedMsg = "Producto actualizado con éxito";
+    } else {
+      // Create flow
+      const newItem: Product = {
+        id,
+        sku: sku.trim(),
+        name: name.trim(),
+        description: description.trim(),
+        category: finalCategory || "Otros",
+        retailPrice: Number(retailPrice) || 0,
+        wholesalePrice: Number(wholesalePrice) || 0,
+        images: filteredImages,
+        videoUrl: videoUrl.trim(),
+        isAvailable: !!isAvailable,
+        createdAt: currentTime,
+        updatedAt: currentTime,
+        views: 0,
+        whatsappClicks: 0
+      };
+
+      updatedProductsList = [newItem, ...products];
+      savedMsg = "Producto agregado al catálogo";
+    }
+
+    // UPDATE LOCAL STATE AND CACHE INSTANTLY (IMMEDIATE REACTION)
+    setProducts(updatedProductsList);
+    try {
+      localStorage.setItem("local_products_cache", JSON.stringify(updatedProductsList));
+    } catch (e) {}
+
+    setIsEditingProduct(false);
 
     try {
       const productRef = doc(db, "products", id);
-      const currentTime = new Date();
-
       if (editingProductId) {
-        // Edit flow
-        const updatedProduct = {
+        const reqObj = {
           sku: sku.trim(),
           name: name.trim(),
           description: description.trim(),
@@ -287,11 +421,9 @@ export default function AdminPanel({
           isAvailable: !!isAvailable,
           updatedAt: currentTime
         };
-        await updateDoc(productRef, updatedProduct);
-        showToast("Producto actualizado con éxito");
+        await updateDoc(productRef, reqObj);
       } else {
-        // Create flow
-        const newProduct = {
+        const reqObj = {
           sku: sku.trim(),
           name: name.trim(),
           description: description.trim(),
@@ -306,15 +438,12 @@ export default function AdminPanel({
           views: 0,
           whatsappClicks: 0
         };
-        await setDoc(productRef, newProduct);
-        showToast("Producto agregado al catálogo");
+        await setDoc(productRef, reqObj);
       }
-
-      setIsEditingProduct(false);
-      onRefreshProducts();
+      showToast(savedMsg);
     } catch (error) {
-      showToast("Error al guardar producto: " + (error as Error).message, "error");
-      handleFirestoreError(error, OperationType.WRITE, path);
+      console.warn("Could not sync product edit with Cloud Firestore:", error);
+      showToast("Guardado localmente. (Error al sincronizar con la nube)", "success");
     } finally {
       setLoading(false);
     }
@@ -325,14 +454,20 @@ export default function AdminPanel({
     if (!confirm("¿Está seguro que desea eliminar este producto del catálogo?")) return;
     
     setLoading(true);
-    const path = `products/${id}`;
+    
+    // UPDATE LOCAL STATE AND CACHE INSTANTLY
+    const updatedProductsList = products.filter(p => p.id !== id);
+    setProducts(updatedProductsList);
+    try {
+      localStorage.setItem("local_products_cache", JSON.stringify(updatedProductsList));
+    } catch (e) {}
+
     try {
       await deleteDoc(doc(db, "products", id));
       showToast("Producto eliminado del catálogo");
-      onRefreshProducts();
     } catch (error) {
-      showToast("Error al eliminar el producto: " + (error as Error).message, "error");
-      handleFirestoreError(error, OperationType.DELETE, path);
+      console.warn("Could not sync delete with Cloud Firestore:", error);
+      showToast("Eliminado localmente. (Error al sincronizar con la nube)", "success");
     } finally {
       setLoading(false);
     }
@@ -778,9 +913,18 @@ export default function AdminPanel({
 
           <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
             {products.length === 0 ? (
-              <div className="p-12 text-center text-slate-400 flex flex-col items-center justify-center">
+              <div className="p-12 text-center text-slate-400 flex flex-col items-center justify-center gap-4">
                 <Store size={40} className="text-slate-300 mb-2" />
-                <span className="text-sm font-medium">No se han registrado productos. ¡Registra el primero!</span>
+                <span className="text-sm font-medium text-slate-600">No se han registrado productos en la base de datos de la nube.</span>
+                {onSeedDemo && (
+                  <button
+                    onClick={onSeedDemo}
+                    className="px-5 py-2.5 bg-amber-500 hover:bg-amber-655 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-amber-500/10 flex items-center gap-2 cursor-pointer mt-2"
+                  >
+                    <Sparkles size={14} className="text-amber-100 animate-pulse" />
+                    <span>Cargar Productos de Demostración</span>
+                  </button>
+                )}
               </div>
             ) : (
               <div className="overflow-x-auto">

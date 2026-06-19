@@ -82,9 +82,41 @@ const INITIAL_STORE_CONFIG: StoreConfig = {
 
 export default function App() {
   // Global states
-  const [products, setProducts] = useState<Product[]>([]);
-  const [storeConfig, setStoreConfig] = useState<StoreConfig>(INITIAL_STORE_CONFIG);
-  const [categories, setCategories] = useState<string[]>(["Todos"]);
+  const [products, setProducts] = useState<Product[]>(() => {
+    try {
+      const saved = localStorage.getItem("local_products_cache");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch (e) {}
+    return DEMO_PRODUCTS;
+  });
+  const [storeConfig, setStoreConfig] = useState<StoreConfig>(() => {
+    try {
+      const saved = localStorage.getItem("local_store_config_cache");
+      if (saved) {
+        return JSON.parse(saved) as StoreConfig;
+      }
+    } catch (e) {}
+    return INITIAL_STORE_CONFIG;
+  });
+  const [categories, setCategories] = useState<string[]>(() => {
+    const initialProducts = (() => {
+      try {
+        const saved = localStorage.getItem("local_products_cache");
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } catch (e) {}
+      return DEMO_PRODUCTS;
+    })();
+    const cats = Array.from(new Set(initialProducts.map((item) => item.category).filter(Boolean)));
+    return ["Todos", ...cats];
+  });
   const [selectedCategory, setSelectedCategory] = useState("Todos");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
@@ -118,7 +150,7 @@ export default function App() {
     return false;
   });
   const [authError, setAuthError] = useState<string | null>(null);
-  const [loadingApp, setLoadingApp] = useState(true);
+  const [loadingApp, setLoadingApp] = useState(false);
 
   // Modal Login form states
   const [showLoginModal, setShowLoginModal] = useState(false);
@@ -137,12 +169,14 @@ export default function App() {
         const configDocRef = doc(db, "storeConfig", "default");
         unsubscribeConfig = onSnapshot(configDocRef, (snapshot) => {
           if (snapshot.exists()) {
-            setStoreConfig(snapshot.data() as StoreConfig);
+            const data = snapshot.data() as StoreConfig;
+            setStoreConfig(data);
+            try {
+              localStorage.setItem("local_store_config_cache", JSON.stringify(data));
+            } catch (e) {}
           } else {
-            // Seed base configuration if none exist
-            setDoc(configDocRef, INITIAL_STORE_CONFIG).catch(err => {
-              console.warn("Could not seed store configuration initially.", err);
-            });
+            // Do not write (setDoc) to cloud on passive guest load to avoid infinite permission denied loops.
+            // When an admin logs in and changes settings, this is successfully saved to Firestore.
             setStoreConfig(INITIAL_STORE_CONFIG);
           }
         }, (err) => {
@@ -157,11 +191,17 @@ export default function App() {
             items.push({ id: snapDoc.id, ...snapDoc.data() } as Product);
           });
 
-          // Seed demo products if empty
+          // If the cloud database is empty, use the static demo list locally so guests have a pristine immediate view.
+          // The Admin is presented with a safe button to manually sync and seed standard catalog values to Firestore.
           if (snapshot.empty) {
-            seedDemoProducts();
+            setProducts(DEMO_PRODUCTS);
+            const cats = Array.from(new Set(DEMO_PRODUCTS.map((item) => item.category).filter(Boolean)));
+            setCategories(["Todos", ...cats]);
           } else {
             setProducts(items);
+            try {
+              localStorage.setItem("local_products_cache", JSON.stringify(items));
+            } catch (e) {}
             // Extract distinct dynamic categories
             const cats = Array.from(new Set(items.map((item) => item.category).filter(Boolean)));
             setCategories(["Todos", ...cats]);
@@ -248,27 +288,40 @@ export default function App() {
 
   // Helper: Static loading if listener fails due to offline/permission
   const loadProductsStatically = async () => {
-    const path = "products";
     try {
-      const q = query(collection(db, "products"), orderBy("createdAt", "desc"));
-      const querySnap = await getDocs(q);
-      const items: Product[] = [];
-      querySnap.forEach((d) => {
-        items.push({ id: d.id, ...d.data() } as Product);
-      });
-      setProducts(items);
-      const cats = Array.from(new Set(items.map((item) => item.category).filter(Boolean)));
-      setCategories(["Todos", ...cats]);
-    } catch (error) {
-      console.error("Static fetch failed.", error);
-    } finally {
-      setLoadingApp(false);
+      const saved = localStorage.getItem("local_products_cache");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setProducts(parsed);
+          const cats = Array.from(new Set(parsed.map((item) => item.category).filter(Boolean)));
+          setCategories(["Todos", ...cats]);
+          setLoadingApp(false);
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn("Could not load products from local cache:", e);
     }
+
+    // fallback to static demo products
+    setProducts(DEMO_PRODUCTS);
+    const cats = Array.from(new Set(DEMO_PRODUCTS.map((item) => item.category).filter(Boolean)));
+    setCategories(["Todos", ...cats]);
+    setLoadingApp(false);
   };
 
   // Dynamic metrics tracking
   const handleSelectProduct = async (product: Product) => {
     setSelectedProduct(product);
+    
+    // Increment view count locally first (instant UI update)
+    const updated = products.map(p => p.id === product.id ? { ...p, views: (p.views || 0) + 1 } : p);
+    setProducts(updated);
+    try {
+      localStorage.setItem("local_products_cache", JSON.stringify(updated));
+    } catch (e) {}
+
     try {
       const productRef = doc(db, "products", product.id);
       await updateDoc(productRef, {
@@ -280,6 +333,13 @@ export default function App() {
   };
 
   const handleWhatsAppInquiry = async (product: Product) => {
+    // Increment click count locally first (instant UI update)
+    const updated = products.map(p => p.id === product.id ? { ...p, whatsappClicks: (p.whatsappClicks || 0) + 1 } : p);
+    setProducts(updated);
+    try {
+      localStorage.setItem("local_products_cache", JSON.stringify(updated));
+    } catch (e) {}
+
     try {
       const productRef = doc(db, "products", product.id);
       await updateDoc(productRef, {
@@ -496,8 +556,11 @@ export default function App() {
           <AdminPanel
             products={products}
             storeConfig={storeConfig}
+            setProducts={setProducts}
+            setStoreConfig={setStoreConfig}
             onRefreshProducts={refreshAll}
             onRefreshConfig={refreshAll}
+            onSeedDemo={seedDemoProducts}
           />
         </div>
       ) : (

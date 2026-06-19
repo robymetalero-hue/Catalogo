@@ -26,6 +26,11 @@ const ProductCard: React.FC<ProductCardProps> = ({
   onWhatsAppInquiry,
 }) => {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const [imageLoading, setImageLoading] = useState(true);
+
+  React.useEffect(() => {
+    setImageLoading(true);
+  }, [currentImageIndex, product.id]);
 
   const images = product.images && product.images.length > 0
     ? product.images
@@ -54,25 +59,34 @@ const ProductCard: React.FC<ProductCardProps> = ({
   return (
     <motion.div
       id={`product-card-${product.id}`}
-      className="group flex flex-col h-full bg-white rounded-2xl border border-slate-100 hover:border-amber-300/60 shadow-xs hover:shadow-xl overflow-hidden cursor-pointer relative"
+      className="group flex flex-col h-full bg-white rounded-2xl border border-slate-100 hover:border-amber-300/60 shadow-xs hover:shadow-xl overflow-hidden cursor-pointer relative animate-fade-in"
       onClick={() => onOpenDetails(product)}
       initial={{ opacity: 0, y: 16 }}
       whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-40px" }}
-      whileHover={{ y: -8 }}
-      transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+      viewport={{ once: true, margin: "-10px" }}
+      whileHover={{ y: -6 }}
+      transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
     >
       {/* Image Gallery Container */}
-      <div className="relative aspect-square w-full bg-slate-50 overflow-hidden">
+      <div className="relative aspect-square w-full bg-slate-100 overflow-hidden">
+        {/* Skeleton Shimmer Overlay */}
+        {imageLoading && (
+          <div className="absolute inset-0 bg-slate-200 animate-pulse flex items-center justify-center">
+            <ImageIcon size={24} className="text-slate-300 animate-bounce" />
+          </div>
+        )}
+
         <motion.img
           key={currentImageIndex}
           src={images[currentImageIndex]}
           alt={product.name}
           referrerPolicy="no-referrer"
-          className="w-full h-full object-cover"
-          initial={{ opacity: 0.8, scale: 1.03 }}
-          animate={{ opacity: 1, scale: 1.00 }}
-          transition={{ duration: 0.35 }}
+          loading="lazy"
+          onLoad={() => setImageLoading(false)}
+          className={`w-full h-full object-cover transition-all duration-300 ${imageLoading ? 'blur-xs scale-98 opacity-0' : 'blur-none scale-100 opacity-100'}`}
+          initial={{ scale: 1.02 }}
+          animate={{ scale: 1.00 }}
+          transition={{ duration: 0.25 }}
         />
 
         {/* Subtle hover zoom overlay for absolute premium feel */}

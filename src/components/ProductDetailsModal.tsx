@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Product } from "../types";
-import { X, Phone, Tag, Play, Film, Check, ExternalLink, Sparkles } from "lucide-react";
+import { X, Phone, Tag, Play, Film, Check, ExternalLink, Sparkles, Image as ImageIcon } from "lucide-react";
 import { motion } from "motion/react";
 
 interface ProductDetailsModalProps {
@@ -27,6 +27,12 @@ export default function ProductDetailsModal({
 }: ProductDetailsModalProps) {
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [isPlayingVideo, setIsPlayingVideo] = useState(false);
+  const [imageLoading, setImageLoading] = useState(true);
+
+  // Trigger loading skeleton during media transitions for ultimate visual polish
+  useEffect(() => {
+    setImageLoading(true);
+  }, [activeImageIndex, isPlayingVideo, product.id]);
 
   const images = product.images && product.images.length > 0 ? product.images : [
     "https://images.unsplash.com/photo-1544816155-12df9643f363?q=80&w=600&auto=format&fit=crop"
@@ -99,7 +105,15 @@ export default function ProductDetailsModal({
             <div className="flex flex-col gap-4">
               
               {/* Main Media Stage */}
-              <div className="relative aspect-square rounded-2xl bg-slate-50 border border-slate-100 overflow-hidden shadow-3xs flex items-center justify-center">
+              <div className="relative aspect-square rounded-2xl bg-slate-100 border border-slate-100 overflow-hidden shadow-3xs flex items-center justify-center">
+                {/* Immersive Shimmer Skeleton Loader */}
+                {imageLoading && (
+                  <div className="absolute inset-0 bg-slate-200 animate-pulse flex flex-col items-center justify-center gap-2 z-10">
+                    <ImageIcon size={28} className="text-slate-400 animate-bounce" />
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest leading-none">Cargando recurso...</span>
+                  </div>
+                )}
+
                 <motion.div 
                   key={isPlayingVideo ? "video" : activeImageIndex}
                   initial={{ opacity: 0, scale: 1.02 }}
@@ -112,7 +126,8 @@ export default function ProductDetailsModal({
                       <iframe
                         src={embedVideoUrl}
                         title="Product Video"
-                        className="w-full h-full"
+                        onLoad={() => setImageLoading(false)}
+                        className={`w-full h-full transition-opacity duration-300 ${imageLoading ? "opacity-0" : "opacity-100"}`}
                         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                         allowFullScreen
                       ></iframe>
@@ -121,7 +136,10 @@ export default function ProductDetailsModal({
                         src={product.videoUrl}
                         controls
                         autoPlay
-                        className="w-full h-full object-contain"
+                        preload="metadata"
+                        playsInline
+                        onLoadedData={() => setImageLoading(false)}
+                        className={`w-full h-full object-contain transition-opacity duration-300 ${imageLoading ? "opacity-0" : "opacity-100"}`}
                       />
                     )
                   ) : (
@@ -129,7 +147,9 @@ export default function ProductDetailsModal({
                       src={images[activeImageIndex]}
                       alt={product.name}
                       referrerPolicy="no-referrer"
-                      className="w-full h-full object-cover"
+                      loading="lazy"
+                      onLoad={() => setImageLoading(false)}
+                      className={`w-full h-full object-cover transition-all duration-300 ${imageLoading ? "blur-xs scale-98 opacity-0" : "blur-none scale-100 opacity-100"}`}
                     />
                   )}
                 </motion.div>

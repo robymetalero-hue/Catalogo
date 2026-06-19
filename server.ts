@@ -3,10 +3,24 @@ import path from "path";
 import fs from "fs";
 import multer from "multer";
 import { createServer as createViteServer } from "vite";
+import { Storage } from "@google-cloud/storage";
 
 async function startServer() {
   const app = express();
   const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+
+  // Google Cloud Storage setup (automatically authenticates with service account standard context)
+  const gcsBucketName = process.env.GCS_BUCKET_NAME;
+  let gcsBucket: any = null;
+  if (gcsBucketName) {
+    try {
+      const storage = new Storage();
+      gcsBucket = storage.bucket(gcsBucketName);
+      console.log(`[Google Cloud] Storage activo habilitado para el bucket: "${gcsBucketName}"`);
+    } catch (gcsInitErr) {
+      console.warn("[Google Cloud] No se pudo inicializar GCS (usando fallback de almacenamiento local):", gcsInitErr);
+    }
+  }
 
   // Create absolute uploads path with a robust fallback for read-only filesystem environments (like standard Cloud Run containers)
   let uploadDir = path.join(process.cwd(), "public", "uploads");
@@ -47,19 +61,60 @@ async function startServer() {
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
-  // Expose virtual directory /uploads to resolve static files correctly
-  app.use("/uploads", express.static(uploadDir));
+  // Expose virtual directory /uploads to resolve static files with highly optimized cache settings (1 year)
+  app.use(
+    "/uploads",
+    express.static(uploadDir, {
+      maxAge: "365d",
+      immutable: true,
+      fallthrough: false,
+    })
+  );
 
-  // Multi-file upload api route (images and videos)
-  app.post("/api/upload", upload.array("files", 12), (req: any, res: any) => {
+  // Multi-file upload api route (images and videos) with optional GCS upload pipelines
+  app.post("/api/upload", upload.array("files", 12), async (req: any, res: any) => {
     try {
       const files = req.files as Express.Multer.File[];
       if (!files || files.length === 0) {
         return res.status(400).json({ error: "No se subieron archivos." });
       }
 
-      // Construct publicly accessible URLs for the client
-      const urls = files.map(file => `/uploads/${file.filename}`);
+      const urls: string[] = [];
+
+      for (const file of files) {
+        if (gcsBucket) {
+          try {
+            console.log(`[Google Cloud] Subiendo "${file.filename}" a GCS...`);
+            await gcsBucket.upload(file.path, {
+              destination: file.filename,
+              metadata: {
+                contentType: file.mimetype,
+                cacheControl: "public, max-age=31536000", // cache aggressively on GCS EDGE CDN
+              },
+            });
+
+            // Make the file public by default if permissions allow, or construct a generic URL.
+            // On standard public buckets, this direct URL retrieves the file instantly with no performance delay.
+            const publicUrl = `https://storage.googleapis.com/${gcsBucketName}/${file.filename}`;
+            urls.push(publicUrl);
+
+            // Housekeeping: remove local ephemeral container file immediately to save disk space
+            try {
+              fs.unlinkSync(file.path);
+            } catch (unlinkErr) {
+              console.warn("Fallo temporal limpiando archivo local:", unlinkErr);
+            }
+          } catch (gcsUploadErr) {
+            console.error(`[Google Cloud] Desvío de emergencia cargando a GCS, usando local:`, gcsUploadErr);
+            // Fallback to local URL if GCS fails to avoid breaking user workflows
+            urls.push(`/uploads/${file.filename}`);
+          }
+        } else {
+          // Normal local persistent mode with robust static server
+          urls.push(`/uploads/${file.filename}`);
+        }
+      }
+
       return res.json({ urls });
     } catch (error) {
       console.error("Upload handler error:", error);
@@ -76,7 +131,20 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
+    
+    // Serve production bundle with assets preloaded and browser optimized headers
+    app.use(
+      express.static(distPath, {
+        maxAge: "7d",
+        etag: true,
+        setHeaders: (res, path) => {
+          if (path.endsWith(".html")) {
+            res.setHeader("Cache-Control", "no-cache");
+          }
+        }
+      })
+    );
+    
     app.get("*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });
