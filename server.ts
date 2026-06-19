@@ -254,9 +254,9 @@ async function startServer() {
     try {
       const allProducts = await db.select().from(products).orderBy(desc(products.createdAt));
       return res.json(allProducts);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error obteniendo productos:", error);
-      return res.status(500).json({ error: "Error de base de datos obteniendo lista de productos." });
+      return res.status(500).json({ error: "Error de base de datos obteniendo lista de productos: " + (error.message || error) });
     }
   });
 
@@ -271,8 +271,8 @@ async function startServer() {
         name: p.name || "Sin nombre",
         description: p.description || "",
         category: p.category || "General",
-        retailPrice: parseFloat(p.retailPrice) || 0,
-        wholesalePrice: parseFloat(p.wholesalePrice) || 0,
+        retailPrice: Number(p.retailPrice) || 0,
+        wholesalePrice: Number(p.wholesalePrice) || 0,
         images: p.images || [],
         videoUrl: p.videoUrl || "",
         isAvailable: p.isAvailable ?? true,
@@ -282,9 +282,9 @@ async function startServer() {
         updatedAt: new Date(),
       }).returning();
       return res.json(result[0]);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error creando producto:", error);
-      return res.status(500).json({ error: "Error de base de datos creando producto." });
+      return res.status(500).json({ error: "Error de base de datos creando producto: " + (error.message || error) });
     }
   });
 
@@ -298,8 +298,8 @@ async function startServer() {
         name: p.name,
         description: p.description,
         category: p.category,
-        retailPrice: p.retailPrice !== undefined ? parseFloat(p.retailPrice) : undefined,
-        wholesalePrice: p.wholesalePrice !== undefined ? parseFloat(p.wholesalePrice) : undefined,
+        retailPrice: p.retailPrice !== undefined ? (Number(p.retailPrice) || 0) : undefined,
+        wholesalePrice: p.wholesalePrice !== undefined ? (Number(p.wholesalePrice) || 0) : undefined,
         images: p.images,
         videoUrl: p.videoUrl,
         isAvailable: p.isAvailable,
@@ -312,9 +312,9 @@ async function startServer() {
         return res.status(404).json({ error: "Producto no encontrado." });
       }
       return res.json(result[0]);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error actualizando producto:", error);
-      return res.status(500).json({ error: "Error de base de datos actualizando producto." });
+      return res.status(500).json({ error: "Error de base de datos actualizando producto: " + (error.message || error) });
     }
   });
 
@@ -327,9 +327,9 @@ async function startServer() {
         return res.status(404).json({ error: "Producto no encontrado." });
       }
       return res.json({ success: true });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error eliminando producto:", error);
-      return res.status(500).json({ error: "Error de base de datos eliminando producto." });
+      return res.status(500).json({ error: "Error de base de datos eliminando producto: " + (error.message || error) });
     }
   });
 

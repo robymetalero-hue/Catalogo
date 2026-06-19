@@ -451,7 +451,10 @@ export default function AdminPanel({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(reqObj)
         });
-        if (!res.ok) throw new Error("Fallo en la llamada API PostgreSQL al editar");
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || "Fallo en la llamada API PostgreSQL al editar");
+        }
       } else {
         const reqObj = {
           id,
@@ -474,7 +477,10 @@ export default function AdminPanel({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(reqObj)
         });
-        if (!res.ok) throw new Error("Fallo en la llamada API PostgreSQL al crear");
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || "Fallo en la llamada API PostgreSQL al crear");
+        }
       }
       showToast(savedMsg);
       onRefreshProducts(); // Sincroniza productos y categorías reales desde Cloud SQL
@@ -503,7 +509,10 @@ export default function AdminPanel({
       const res = await fetch(`/api/products/${id}`, {
         method: "DELETE"
       });
-      if (!res.ok) throw new Error("Fallo en la llamada API PostgreSQL al eliminar");
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Fallo en la llamada API PostgreSQL al eliminar");
+      }
       showToast("Producto eliminado del catálogo");
       onRefreshProducts(); // Sincroniza los cambios con Cloud SQL
     } catch (error: any) {
