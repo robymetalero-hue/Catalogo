@@ -111,6 +111,8 @@ export default function AdminPanel({
     }
     setSyncingCloud(true);
     let sqlSyncedCount = 0;
+    let lastSqlError = "";
+    let lastFsError = "";
     try {
       showToast("Sincronizando productos locales con la base de datos de la nube...");
       
@@ -126,9 +128,16 @@ export default function AdminPanel({
           sqlSyncedCount = Array.isArray(data) ? data.length : products.length;
           console.log("¡Sincronización con PostgreSQL exitosa!");
         } else {
-          console.warn("Fallo el seed de PostgreSQL, seguiremos con Firestore...");
+          try {
+            const errJson = await res.json();
+            lastSqlError = errJson.error || `Código HTTP: ${res.status}`;
+          } catch (e) {
+            lastSqlError = `Código HTTP: ${res.status}`;
+          }
+          console.warn("Fallo el seed de PostgreSQL, seguiremos con Firestore...", lastSqlError);
         }
-      } catch (sqlErr) {
+      } catch (sqlErr: any) {
+        lastSqlError = sqlErr.message || String(sqlErr);
         console.warn("Error enviando seed a Cloud SQL, continuaremos con Firestore:", sqlErr);
       }
 
@@ -154,12 +163,14 @@ export default function AdminPanel({
             updatedAt: new Date()
           });
           firestoreSyncedCount++;
-        } catch (fsErr) {
+        } catch (fsErr: any) {
+          lastFsError = fsErr.message || String(fsErr);
           console.error(`Error al guardar producto ${p.id} en Firestore:`, fsErr);
         }
       }
 
       // 3. Sync store configuration to Firestore as well
+      let lastConfError = "";
       try {
         const configDocRef = doc(db, "storeConfig", "default");
         await setDoc(configDocRef, {
@@ -172,17 +183,26 @@ export default function AdminPanel({
           showPrices: storeConfig.showPrices ?? true,
           updatedAt: new Date()
         });
-      } catch (fsConfErr) {
+      } catch (fsConfErr: any) {
+        lastConfError = fsConfErr.message || String(fsConfErr);
         console.error("Error al sincronizar storeConfig en Firestore:", fsConfErr);
       }
 
       // Dynamic success message depending on sync success
       if (sqlSyncedCount > 0 || firestoreSyncedCount > 0) {
-        showToast(
-          `¡Sincronización finalizada! Se subieron ${sqlSyncedCount} artículos a PostgreSQL y ${firestoreSyncedCount} a Firestore. ¡Sus clientes ya pueden visualizarlos!`
-        );
+        let msg = `¡Sincronización finalizada! Se subieron ${sqlSyncedCount} artículos a PostgreSQL y ${firestoreSyncedCount} a Firestore.`;
+        if (sqlSyncedCount === 0 && lastSqlError) {
+          msg += ` (PostgreSQL falló: ${lastSqlError})`;
+        }
+        if (firestoreSyncedCount === 0 && lastFsError) {
+          msg += ` (Firestore falló: ${lastFsError})`;
+        }
+        showToast(msg);
       } else {
-        showToast("No se pudieron guardar los artículos en las bases de datos de la nube. Por favor, verifique su conexión.", "error");
+        let errMsg = "No se pudieron guardar los artículos en las bases de datos de la nube.";
+        if (lastSqlError) errMsg += ` [SQL: ${lastSqlError}]`;
+        if (lastFsError) errMsg += ` [Firestore: ${lastFsError}]`;
+        showToast(errMsg, "error");
       }
       onRefreshProducts();
     } catch (error: any) {

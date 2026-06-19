@@ -333,52 +333,68 @@ async function startServer() {
     }
   });
 
-  // Sembrar en lote productos de demostración
+  // Sembrar en lote productos de demostración con validaciones ultra-robustas y logs detallados
   app.post("/api/products/seed", async (req, res) => {
+    console.log(`[SQL Sync] Recibida petición de siembra con lote. Tamaño: ${Array.isArray(req.body) ? req.body.length : "no es arreglo"}`);
     try {
       const list = req.body;
       if (!Array.isArray(list)) {
+        console.warn("[SQL Sync] Error: El cuerpo de la petición no es un arreglo.");
         return res.status(400).json({ error: "Se requiere un arreglo de productos." });
       }
       
       const inserted = [];
       for (const p of list) {
+        const id = p.id || `prod_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+        const retailNum = typeof p.retailPrice === "number" ? p.retailPrice : parseFloat(p.retailPrice);
+        const wholesaleNum = typeof p.wholesalePrice === "number" ? p.wholesalePrice : parseFloat(p.wholesalePrice);
+        
+        const finalRetail = isNaN(retailNum) ? 0 : retailNum;
+        const finalWholesale = isNaN(wholesaleNum) ? 0 : wholesaleNum;
+
+        console.log(`[SQL Sync] Sembrando producto ID: "${id}", SKU: "${p.sku}", Nombre: "${p.name}"`);
+
         const row = await withDBRetry(() => db.insert(products).values({
-          id: p.id,
+          id,
           sku: p.sku || "",
-          name: p.name || "",
+          name: p.name || "Sin nombre",
           description: p.description || "",
-          category: p.category || "",
-          retailPrice: parseFloat(p.retailPrice) || 0,
-          wholesalePrice: parseFloat(p.wholesalePrice) || 0,
+          category: p.category || "General",
+          retailPrice: finalRetail,
+          wholesalePrice: finalWholesale,
           images: p.images || [],
           videoUrl: p.videoUrl || "",
           isAvailable: p.isAvailable ?? true,
           views: p.views || 0,
           whatsappClicks: p.whatsappClicks || 0,
-          createdAt: new Date(),
+          createdAt: p.createdAt ? new Date(p.createdAt) : new Date(),
           updatedAt: new Date(),
         }).onConflictDoUpdate({
           target: products.id,
           set: {
             sku: p.sku || "",
-            name: p.name || "",
+            name: p.name || "Sin nombre",
             description: p.description || "",
-            category: p.category || "",
-            retailPrice: parseFloat(p.retailPrice) || 0,
-            wholesalePrice: parseFloat(p.wholesalePrice) || 0,
+            category: p.category || "General",
+            retailPrice: finalRetail,
+            wholesalePrice: finalWholesale,
             images: p.images || [],
             videoUrl: p.videoUrl || "",
             isAvailable: p.isAvailable ?? true,
             updatedAt: new Date(),
           }
         }).returning());
+        
         inserted.push(row[0]);
       }
+      console.log(`[SQL Sync] Éxito. Se guardaron correctamente ${inserted.length} artículos en PostgreSQL.`);
       return res.json(inserted);
     } catch (error: any) {
-      console.error("Error sembrando productos:", error);
-      return res.status(500).json({ error: "Error de base de datos sembrando productos: " + (error.message || error) });
+      console.error("[SQL Sync] Error crítico sembrando productos:", error);
+      return res.status(500).json({ 
+        error: "Error de base de datos sembrando productos: " + (error.message || error),
+        details: error.stack || ""
+      });
     }
   });
 
