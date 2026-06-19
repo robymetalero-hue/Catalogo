@@ -5,10 +5,13 @@
 
 import React, { useState, useEffect } from "react";
 import { Product, StoreConfig } from "../types";
-import { db, OperationType, handleFirestoreError } from "../firebase";
+import { db, OperationType, handleFirestoreError, storage } from "../firebase";
 import { 
   collection, doc, setDoc, deleteDoc, updateDoc
 } from "firebase/firestore";
+import { 
+  ref, uploadBytes, getDownloadURL 
+} from "firebase/storage";
 import { 
   Store, Plus, Edit2, Trash2, Save, X, Eye, EyeOff, Video, Link, Check, Image as ImageIcon, Sparkles, FolderPlus, Phone, TrendingUp, ThumbsUp, BarChart2, Upload 
 } from "lucide-react";
@@ -118,26 +121,20 @@ export default function AdminPanel({
     setUploadError("");
 
     try {
-      // Compress all files concurrently to keep UI responsive
       const originalFilesList = Array.from(files) as File[];
-      const processedFilesList = await Promise.all(originalFilesList.map((f: File) => compressImage(f)));
+      const urls: string[] = [];
 
-      const formData = new FormData();
-      processedFilesList.forEach((file) => {
-        formData.append("files", file);
-      });
+      for (const file of originalFilesList) {
+        // Build a clean, sanitized and fully unique filename to avoid collision
+        const sanitizedName = file.name.replace(/[^a-zA-Z0-9.\-_]/g, "_");
+        const fileName = `${Date.now()}_${sanitizedName}`;
+        const fileRef = ref(storage, `catalog_media/${fileName}`);
 
-      const response = await fetch("/api/upload", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!response.ok) {
-        throw new Error("Error en la respuesta del servidor.");
+        // Upload the file bytes directly from browser to GCS bucket via Firebase SDK
+        const uploadResult = await uploadBytes(fileRef, file);
+        const downloadUrl = await getDownloadURL(uploadResult.ref);
+        urls.push(downloadUrl);
       }
-
-      const data = await response.json();
-      const urls: string[] = data.urls || [];
 
       const newImages: string[] = [];
       let lastVideo = "";
@@ -167,7 +164,7 @@ export default function AdminPanel({
         setVideoUrl(lastVideo);
       }
 
-      showToast(`¡Carga completada! Subidos ${urls.length} archivo(s).`);
+      showToast(`¡Carga completada! Subidos ${urls.length} archivo(s) directamente a la nube.`);
     } catch (err: any) {
       console.error("Carga de archivos fallida: ", err);
       setUploadError("Error en la carga. El archivo puede ser demasiado grande o no compatible.");

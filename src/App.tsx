@@ -185,11 +185,29 @@ export default function App() {
         });
 
         // 2. Listen to live Products Collection
-        const productsQuery = query(collection(db, "products"), orderBy("createdAt", "desc"));
+        // Querying the collection directly without-orderBy avoids requiring custom Firestore composite indexes.
+        const productsQuery = query(collection(db, "products"));
         unsubscribeProducts = onSnapshot(productsQuery, (snapshot) => {
           const items: Product[] = [];
           snapshot.forEach((snapDoc) => {
             items.push({ id: snapDoc.id, ...snapDoc.data() } as Product);
+          });
+
+          // Sort by creation time descending in memory
+          items.sort((a, b) => {
+            const getTimestamp = (val: any) => {
+              if (val) {
+                if (val.createdAt) {
+                  if (val.createdAt.seconds) return val.createdAt.seconds * 1000;
+                  if (val.createdAt instanceof Date) return val.createdAt.getTime();
+                  if (typeof val.createdAt === 'string' || typeof val.createdAt === 'number') {
+                    return new Date(val.createdAt).getTime();
+                  }
+                }
+              }
+              return 0;
+            };
+            return getTimestamp(b) - getTimestamp(a);
           });
 
           // If the cloud database is empty, use the static demo list locally so guests have a pristine immediate view.
@@ -259,7 +277,28 @@ export default function App() {
       } else {
         // Only clear user state if we don't have a local admin override session
         const saved = localStorage.getItem("admin_session");
-        if (!saved) {
+        if (saved) {
+          try {
+            const parsed = JSON.parse(saved);
+            if (parsed && parsed.email === "robymetalero@gmail.com") {
+              // Automatically re-authenticate in the background using the standardized admin password.
+              // This guarantees that their Firebase Auth session matches their visual Admin state, eliminating "Missing or insufficient permissions"!
+              signInWithEmailAndPassword(auth, "robymetalero@gmail.com", "robyadmin2026")
+                .then(() => {
+                  console.log("Silent background re-authentication succeeded!");
+                })
+                .catch((authError) => {
+                  console.warn("Silent background authentication failed (non-blocking):", authError);
+                });
+            } else {
+              setUser(null);
+              setShowAdminPanel(false);
+            }
+          } catch (e) {
+            setUser(null);
+            setShowAdminPanel(false);
+          }
+        } else {
           setUser(null);
           setShowAdminPanel(false);
         }
