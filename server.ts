@@ -85,6 +85,7 @@ async function startServer() {
         if (gcsBucket) {
           try {
             console.log(`[Google Cloud] Subiendo "${file.filename}" a GCS...`);
+            const gcsFile = gcsBucket.file(file.filename);
             await gcsBucket.upload(file.path, {
               destination: file.filename,
               metadata: {
@@ -92,6 +93,13 @@ async function startServer() {
                 cacheControl: "public, max-age=31536000", // cache aggressively on GCS EDGE CDN
               },
             });
+
+            try {
+              // Explicitly make public to guarantee other users and catalog visitors can view the assets fully
+              await gcsFile.makePublic();
+            } catch (aclErr) {
+              console.warn("[Google Cloud] Could not alter ACL/make file public (Normal if Uniform Bucket Access is active):", aclErr);
+            }
 
             // Make the file public by default if permissions allow, or construct a generic URL.
             // On standard public buckets, this direct URL retrieves the file instantly with no performance delay.

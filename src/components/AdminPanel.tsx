@@ -206,9 +206,9 @@ export default function AdminPanel({
       const configRef = doc(db, "storeConfig", "default");
       await setDoc(configRef, updatedData);
       showToast("Configuración general guardada exitosamente");
-    } catch (error) {
-      console.warn("Could not save to Firestore, local state preserved:", error);
-      showToast("Guardado localmente. (Error al sincronizar con la nube)", "success");
+    } catch (error: any) {
+      console.error("Could not save config to Firestore:", error);
+      showToast(`Error al guardar configuración: ${error.message || error}`, "error");
     } finally {
       setLoading(false);
     }
@@ -382,9 +382,9 @@ export default function AdminPanel({
         await setDoc(productRef, reqObj);
       }
       showToast(savedMsg);
-    } catch (error) {
-      console.warn("Could not sync product edit with Cloud Firestore:", error);
-      showToast("Guardado localmente. (Error al sincronizar con la nube)", "success");
+    } catch (error: any) {
+      console.error("Could not sync product edit with Cloud Firestore:", error);
+      showToast(`Error al guardar producto: ${error.message || error}`, "error");
     } finally {
       setLoading(false);
     }
@@ -406,9 +406,9 @@ export default function AdminPanel({
     try {
       await deleteDoc(doc(db, "products", id));
       showToast("Producto eliminado del catálogo");
-    } catch (error) {
-      console.warn("Could not sync delete with Cloud Firestore:", error);
-      showToast("Eliminado localmente. (Error al sincronizar con la nube)", "success");
+    } catch (error: any) {
+      console.error("Could not sync delete with Cloud Firestore:", error);
+      showToast(`Error al eliminar producto: ${error.message || error}`, "error");
     } finally {
       setLoading(false);
     }

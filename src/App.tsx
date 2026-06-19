@@ -10,7 +10,8 @@ import {
   collection, query, getDocs, onSnapshot, doc, setDoc, orderBy, updateDoc, increment 
 } from "firebase/firestore";
 import { 
-  signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged 
+  signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged,
+  signInWithEmailAndPassword, createUserWithEmailAndPassword
 } from "firebase/auth";
 import { 
   Lock, LogOut, CheckCircle2, ShoppingBag, Grid, Compass, Smartphone, AlertCircle, X, ShieldAlert, Share2 
@@ -194,9 +195,10 @@ export default function App() {
           // If the cloud database is empty, use the static demo list locally so guests have a pristine immediate view.
           // The Admin is presented with a safe button to manually sync and seed standard catalog values to Firestore.
           if (snapshot.empty) {
-            setProducts(DEMO_PRODUCTS);
-            const cats = Array.from(new Set(DEMO_PRODUCTS.map((item) => item.category).filter(Boolean)));
-            setCategories(["Todos", ...cats]);
+            // If the database is empty, keep it empty so that custom items and deletions are fully respected.
+            // The admin can always manually click "Cargar Productos de Demostración" to seed Firestore.
+            setProducts([]);
+            setCategories(["Todos"]);
           } else {
             setProducts(items);
             try {
@@ -395,7 +397,7 @@ export default function App() {
     }
   };
 
-  const handlePasswordLogin = (e: React.FormEvent) => {
+  const handlePasswordLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLocalLoginError(null);
     const cleanEmail = loginEmail.trim().toLowerCase();
@@ -413,21 +415,53 @@ export default function App() {
       return;
     }
 
-    const loggedUser: AdminUser = {
-      uid: "local-admin-uid-roby",
-      email: "robymetalero@gmail.com",
-      displayName: "Administrador Roby",
-      photoURL: null,
-      isAdmin: true
-    };
+    setLoadingApp(true);
+    try {
+      // Use "robyadmin2026" as a standardized strong password for Firebase auth backend representation
+      const firebasePassword = "robyadmin2026";
+      let firebaseUser = null;
+      try {
+        const result = await signInWithEmailAndPassword(auth, cleanEmail, firebasePassword);
+        firebaseUser = result.user;
+      } catch (signInErr: any) {
+        if (signInErr.code === "auth/user-not-found" || signInErr.code === "auth/invalid-login-credentials" || signInErr.code === "auth/invalid-credential" || signInErr.code === "auth/cannot-find-user") {
+          try {
+            const result = await createUserWithEmailAndPassword(auth, cleanEmail, firebasePassword);
+            firebaseUser = result.user;
+          } catch (createErr: any) {
+            console.warn("Could not auto-register user on Firebase Auth:", createErr);
+          }
+        } else {
+          console.warn("Firebase Auth signIn error:", signInErr);
+        }
+      }
 
-    setUser(loggedUser);
-    localStorage.setItem("admin_session", JSON.stringify(loggedUser));
-    setShowAdminPanel(true);
-    setShowLoginModal(false);
-    setLoginPassword("");
-    setShareToast("¡Sesión iniciada con éxito! Bienvenido al Panel de Administración.");
-    setTimeout(() => setShareToast(null), 3000);
+      const loggedUser: AdminUser = {
+        uid: firebaseUser?.uid || "local-admin-uid-roby",
+        email: "robymetalero@gmail.com",
+        displayName: "Administrador Roby",
+        photoURL: null,
+        isAdmin: true
+      };
+
+      setUser(loggedUser);
+      localStorage.setItem("admin_session", JSON.stringify(loggedUser));
+      setShowAdminPanel(true);
+      setShowLoginModal(false);
+      setLoginPassword("");
+      
+      if (firebaseUser) {
+        setShareToast("¡Sesión iniciada con éxito y sincronizada con el servidor!");
+      } else {
+        setShareToast("¡Sesión iniciada localmente! (Servicio de autenticación no disponible).");
+      }
+      setTimeout(() => setShareToast(null), 4000);
+    } catch (err: any) {
+      console.error("General login process error:", err);
+      setLocalLoginError("Fallo al iniciar sesión en la base de datos: " + err.message);
+    } finally {
+      setLoadingApp(false);
+    }
   };
 
   const handleLogout = async () => {
