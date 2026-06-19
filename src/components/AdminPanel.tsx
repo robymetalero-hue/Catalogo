@@ -121,20 +121,23 @@ export default function AdminPanel({
     setUploadError("");
 
     try {
-      const originalFilesList = Array.from(files) as File[];
-      const urls: string[] = [];
-
-      for (const file of originalFilesList) {
-        // Build a clean, sanitized and fully unique filename to avoid collision
-        const sanitizedName = file.name.replace(/[^a-zA-Z0-9.\-_]/g, "_");
-        const fileName = `${Date.now()}_${sanitizedName}`;
-        const fileRef = ref(storage, `catalog_media/${fileName}`);
-
-        // Upload the file bytes directly from browser to GCS bucket via Firebase SDK
-        const uploadResult = await uploadBytes(fileRef, file);
-        const downloadUrl = await getDownloadURL(uploadResult.ref);
-        urls.push(downloadUrl);
+      const formData = new FormData();
+      for (const file of Array.from(files) as File[]) {
+        formData.append("files", file);
       }
+
+      // Upload via backend Express API endpoint
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) {
+        throw new Error("La respuesta del backend falló durante la subida.");
+      }
+
+      const uploadData = await res.json();
+      const urls: string[] = uploadData.urls || [];
 
       const newImages: string[] = [];
       let lastVideo = "";
@@ -164,10 +167,10 @@ export default function AdminPanel({
         setVideoUrl(lastVideo);
       }
 
-      showToast(`¡Carga completada! Subidos ${urls.length} archivo(s) directamente a la nube.`);
+      showToast(`¡Carga completada! Subidos ${urls.length} archivo(s) al servidor de Google Cloud.`);
     } catch (err: any) {
       console.error("Carga de archivos fallida: ", err);
-      setUploadError("Error en la carga. El archivo puede ser demasiado grande o no compatible.");
+      setUploadError("Error en la carga rápida. El archivo puede ser demasiado grande o no compatible.");
       showToast("Error al subir los medios", "error");
     } finally {
       setUploadingMedia(false);
@@ -200,11 +203,16 @@ export default function AdminPanel({
     } catch (err) {}
 
     try {
-      const configRef = doc(db, "storeConfig", "default");
-      await setDoc(configRef, updatedData);
-      showToast("Configuración general guardada exitosamente");
+      const res = await fetch("/api/store-config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updatedData)
+      });
+      if (!res.ok) throw new Error("Fallo en la llamada API a Google Cloud PostgreSQL");
+      showToast("Configuración general guardada exitosamente en Google Cloud SQL");
+      onRefreshConfig(); // Sincroniza la información real desde la BD
     } catch (error: any) {
-      console.error("Could not save config to Firestore:", error);
+      console.error("Could not save config to Google Cloud SQL:", error);
       showToast(`Error al guardar configuración: ${error.message || error}`, "error");
     } finally {
       setLoading(false);
@@ -345,7 +353,6 @@ export default function AdminPanel({
     setIsEditingProduct(false);
 
     try {
-      const productRef = doc(db, "products", id);
       if (editingProductId) {
         const reqObj = {
           sku: sku.trim(),
@@ -359,9 +366,15 @@ export default function AdminPanel({
           isAvailable: !!isAvailable,
           updatedAt: currentTime
         };
-        await updateDoc(productRef, reqObj);
+        const res = await fetch(`/api/products/${editingProductId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(reqObj)
+        });
+        if (!res.ok) throw new Error("Fallo en la llamada API PostgreSQL al editar");
       } else {
         const reqObj = {
+          id,
           sku: sku.trim(),
           name: name.trim(),
           description: description.trim(),
@@ -376,11 +389,17 @@ export default function AdminPanel({
           views: 0,
           whatsappClicks: 0
         };
-        await setDoc(productRef, reqObj);
+        const res = await fetch("/api/products", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(reqObj)
+        });
+        if (!res.ok) throw new Error("Fallo en la llamada API PostgreSQL al crear");
       }
       showToast(savedMsg);
+      onRefreshProducts(); // Sincroniza productos y categorías reales desde Cloud SQL
     } catch (error: any) {
-      console.error("Could not sync product edit with Cloud Firestore:", error);
+      console.error("Could not sync product edit with Cloud SQL:", error);
       showToast(`Error al guardar producto: ${error.message || error}`, "error");
     } finally {
       setLoading(false);
@@ -401,10 +420,14 @@ export default function AdminPanel({
     } catch (e) {}
 
     try {
-      await deleteDoc(doc(db, "products", id));
+      const res = await fetch(`/api/products/${id}`, {
+        method: "DELETE"
+      });
+      if (!res.ok) throw new Error("Fallo en la llamada API PostgreSQL al eliminar");
       showToast("Producto eliminado del catálogo");
+      onRefreshProducts(); // Sincroniza los cambios con Cloud SQL
     } catch (error: any) {
-      console.error("Could not sync delete with Cloud Firestore:", error);
+      console.error("Could not sync delete with Cloud SQL:", error);
       showToast(`Error al eliminar producto: ${error.message || error}`, "error");
     } finally {
       setLoading(false);

@@ -159,91 +159,47 @@ export default function App() {
   const [loginPassword, setLoginPassword] = useState("");
   const [localLoginError, setLocalLoginError] = useState<string | null>(null);
 
-  // Load configuration and listen to Products collection on start
-  useEffect(() => {
-    let unsubscribeProducts = () => {};
-    let unsubscribeConfig = () => {};
-
-    const loadData = async () => {
-      try {
-        // 1. Listen to store Config document
-        const configDocRef = doc(db, "storeConfig", "default");
-        unsubscribeConfig = onSnapshot(configDocRef, (snapshot) => {
-          if (snapshot.exists()) {
-            const data = snapshot.data() as StoreConfig;
-            setStoreConfig(data);
-            try {
-              localStorage.setItem("local_store_config_cache", JSON.stringify(data));
-            } catch (e) {}
-          } else {
-            // Do not write (setDoc) to cloud on passive guest load to avoid infinite permission denied loops.
-            // When an admin logs in and changes settings, this is successfully saved to Firestore.
-            setStoreConfig(INITIAL_STORE_CONFIG);
-          }
-        }, (err) => {
-          console.warn("Permission restricted for configuration listening.", err);
-        });
-
-        // 2. Listen to live Products Collection
-        // Querying the collection directly without-orderBy avoids requiring custom Firestore composite indexes.
-        const productsQuery = query(collection(db, "products"));
-        unsubscribeProducts = onSnapshot(productsQuery, (snapshot) => {
-          const items: Product[] = [];
-          snapshot.forEach((snapDoc) => {
-            items.push({ id: snapDoc.id, ...snapDoc.data() } as Product);
-          });
-
-          // Sort by creation time descending in memory
-          items.sort((a, b) => {
-            const getTimestamp = (val: any) => {
-              if (val) {
-                if (val.createdAt) {
-                  if (val.createdAt.seconds) return val.createdAt.seconds * 1000;
-                  if (val.createdAt instanceof Date) return val.createdAt.getTime();
-                  if (typeof val.createdAt === 'string' || typeof val.createdAt === 'number') {
-                    return new Date(val.createdAt).getTime();
-                  }
-                }
-              }
-              return 0;
-            };
-            return getTimestamp(b) - getTimestamp(a);
-          });
-
-          // If the cloud database is empty, use the static demo list locally so guests have a pristine immediate view.
-          // The Admin is presented with a safe button to manually sync and seed standard catalog values to Firestore.
-          if (snapshot.empty) {
-            // If the database is empty, keep it empty so that custom items and deletions are fully respected.
-            // The admin can always manually click "Cargar Productos de Demostración" to seed Firestore.
-            setProducts([]);
-            setCategories(["Todos"]);
-          } else {
-            setProducts(items);
-            try {
-              localStorage.setItem("local_products_cache", JSON.stringify(items));
-            } catch (e) {}
-            // Extract distinct dynamic categories
-            const cats = Array.from(new Set(items.map((item) => item.category).filter(Boolean)));
-            setCategories(["Todos", ...cats]);
-          }
-          setLoadingApp(false);
-        }, (err) => {
-          console.error("Listening query failed, loading statically.", err);
-          loadProductsStatically();
-        });
-
-      } catch (error) {
-        console.error("Initialization failed: ", error);
-        setLoadingApp(false);
+  // Fetch functions for Cloud SQL / Express Backend
+  const fetchProducts = async () => {
+    try {
+      const res = await fetch("/api/products");
+      if (res.ok) {
+        const data = await res.json();
+        setProducts(data);
+        localStorage.setItem("local_products_cache", JSON.stringify(data));
+        const cats = Array.from(new Set(data.map((item: Product) => item.category).filter(Boolean)));
+        setCategories(["Todos", ...cats]);
+      } else {
+        throw new Error("Error cargando productos de la base de datos de Google Cloud");
       }
-    };
+    } catch (e) {
+      console.error("Error al cargar productos desde la API, usando caché local:", e);
+      loadProductsStatically();
+    }
+  };
 
-    loadData();
+  const fetchStoreConfig = async () => {
+    try {
+      const res = await fetch("/api/store-config");
+      if (res.ok) {
+        const data = await res.json();
+        setStoreConfig(data);
+        localStorage.setItem("local_store_config_cache", JSON.stringify(data));
+      }
+    } catch (e) {
+      console.warn("No se pudo cargar la configuración de la tienda desde la API:", e);
+    }
+  };
 
-    return () => {
-      unsubscribeProducts();
-      unsubscribeConfig();
-    };
+  const refreshAll = async () => {
+    setLoadingApp(true);
+    await Promise.all([fetchProducts(), fetchStoreConfig()]);
+    setLoadingApp(false);
+  };
+
+  // Load configuration and products on mount
+  useEffect(() => {
+    refreshAll();
   }, []);
 
   // Dynamically update browser tab title based on store configuration
@@ -308,19 +264,18 @@ export default function App() {
     return () => unsubAuth();
   }, []);
 
-  // Helper: Seed initial products to Firestore
+  // Helper: Seed initial products to PostgreSQL Cloud SQL
   const seedDemoProducts = async () => {
     try {
-      for (const p of DEMO_PRODUCTS) {
-        await setDoc(doc(db, "products", p.id), {
-          ...p,
-          createdAt: new Date(),
-          updatedAt: new Date()
-        });
-      }
-      refreshAll();
+      const res = await fetch("/api/products/seed", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(DEMO_PRODUCTS)
+      });
+      if (!res.ok) throw new Error("Fallo al sembrar lote de demostración en Postgres");
+      await refreshAll();
     } catch (err) {
-      console.warn("Could not auto-seed demo products because of Firestore constraints.", err);
+      console.warn("Could not auto-seed demo products because of API or Postgres constraints.", err);
       // fallback to offline products state
       setProducts(DEMO_PRODUCTS);
       setLoadingApp(false);
@@ -364,12 +319,13 @@ export default function App() {
     } catch (e) {}
 
     try {
-      const productRef = doc(db, "products", product.id);
-      await updateDoc(productRef, {
-        views: increment(1)
+      await fetch(`/api/products/${product.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ views: (product.views || 0) + 1 })
       });
     } catch (err) {
-      console.warn("Could not track view metrics in Firestore (offline or security restrictions).", err);
+      console.warn("Could not track view metrics in Cloud SQL.", err);
     }
   };
 
@@ -382,12 +338,13 @@ export default function App() {
     } catch (e) {}
 
     try {
-      const productRef = doc(db, "products", product.id);
-      await updateDoc(productRef, {
-        whatsappClicks: increment(1)
+      await fetch(`/api/products/${product.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ whatsappClicks: (product.whatsappClicks || 0) + 1 })
       });
     } catch (err) {
-      console.warn("Could not track WhatsApp click in Firestore (offline or security restrictions).", err);
+      console.warn("Could not track WhatsApp click in Cloud SQL.", err);
     }
   };
 
@@ -411,11 +368,6 @@ export default function App() {
         console.error("No se pudo copiar el enlace:", err);
       }
     }
-  };
-
-  // Manual refreshment selectors passed to children
-  const refreshAll = () => {
-    loadProductsStatically();
   };
 
   const handleAdminLogin = async () => {

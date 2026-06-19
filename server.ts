@@ -4,6 +4,9 @@ import fs from "fs";
 import multer from "multer";
 import { createServer as createViteServer } from "vite";
 import { Storage } from "@google-cloud/storage";
+import { db } from "./src/db/index.ts";
+import { products, storeConfig } from "./src/db/schema.ts";
+import { eq, desc } from "drizzle-orm";
 
 async function startServer() {
   const app = express();
@@ -127,6 +130,202 @@ async function startServer() {
     } catch (error) {
       console.error("Upload handler error:", error);
       return res.status(500).json({ error: "Error interno al procesar los archivos de catálogo." });
+    }
+  });
+
+  // --- API DE TIENDA Y CONFIGURACIÓN ---
+  
+  // Obtener configuración de la tienda
+  app.get("/api/store-config", async (req, res) => {
+    try {
+      const config = await db.select().from(storeConfig).where(eq(storeConfig.id, "default")).limit(1);
+      if (config.length === 0) {
+        // Sembrar valores por defecto si no existen
+        const defaultDoc = {
+          id: "default",
+          storeName: "Mi Catálogo de WhatsApp",
+          address: "",
+          phone: "",
+          whatsappNumber: "",
+          whatsappCustomMessage: "Hola, me interesa este producto: {name} ({sku}) - {price}",
+          locationUrl: "",
+          showPrices: true,
+          updatedAt: new Date()
+        };
+        const inserted = await db.insert(storeConfig).values(defaultDoc).returning();
+        return res.json(inserted[0]);
+      }
+      return res.json(config[0]);
+    } catch (error) {
+      console.error("Error guardando el store-config:", error);
+      return res.status(500).json({ error: "Error de base de datos cargando configuración de la tienda." });
+    }
+  });
+
+  // Guardar/actualizar configuración de la tienda
+  app.post("/api/store-config", async (req, res) => {
+    try {
+      const payload = req.body;
+      const updated = await db.insert(storeConfig).values({
+        id: "default",
+        storeName: payload.storeName || "Mi Catálogo de WhatsApp",
+        address: payload.address || "",
+        phone: payload.phone || "",
+        whatsappNumber: payload.whatsappNumber || "",
+        whatsappCustomMessage: payload.whatsappCustomMessage || "Hola, me interesa este producto: {name} ({sku}) - {price}",
+        locationUrl: payload.locationUrl || "",
+        showPrices: payload.showPrices ?? true,
+        updatedAt: new Date()
+      }).onConflictDoUpdate({
+        target: storeConfig.id,
+        set: {
+          storeName: payload.storeName || "Mi Catálogo de WhatsApp",
+          address: payload.address || "",
+          phone: payload.phone || "",
+          whatsappNumber: payload.whatsappNumber || "",
+          whatsappCustomMessage: payload.whatsappCustomMessage || "Hola, me interesa este producto: {name} ({sku}) - {price}",
+          locationUrl: payload.locationUrl || "",
+          showPrices: payload.showPrices ?? true,
+          updatedAt: new Date()
+        }
+      }).returning();
+      return res.json(updated[0]);
+    } catch (error) {
+      console.error("Error actualizando store-config:", error);
+      return res.status(500).json({ error: "Error de base de datos actualizando configuración de la tienda." });
+    }
+  });
+
+  // Obtener todos los productos
+  app.get("/api/products", async (req, res) => {
+    try {
+      const allProducts = await db.select().from(products).orderBy(desc(products.createdAt));
+      return res.json(allProducts);
+    } catch (error) {
+      console.error("Error obteniendo productos:", error);
+      return res.status(500).json({ error: "Error de base de datos obteniendo lista de productos." });
+    }
+  });
+
+  // Crear un producto
+  app.post("/api/products", async (req, res) => {
+    try {
+      const p = req.body;
+      const id = p.id || `prod_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const result = await db.insert(products).values({
+        id,
+        sku: p.sku || "",
+        name: p.name || "Sin nombre",
+        description: p.description || "",
+        category: p.category || "General",
+        retailPrice: parseFloat(p.retailPrice) || 0,
+        wholesalePrice: parseFloat(p.wholesalePrice) || 0,
+        images: p.images || [],
+        videoUrl: p.videoUrl || "",
+        isAvailable: p.isAvailable ?? true,
+        views: p.views || 0,
+        whatsappClicks: p.whatsappClicks || 0,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }).returning();
+      return res.json(result[0]);
+    } catch (error) {
+      console.error("Error creando producto:", error);
+      return res.status(500).json({ error: "Error de base de datos creando producto." });
+    }
+  });
+
+  // Actualizar un producto
+  app.put("/api/products/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const p = req.body;
+      const result = await db.update(products).set({
+        sku: p.sku,
+        name: p.name,
+        description: p.description,
+        category: p.category,
+        retailPrice: p.retailPrice !== undefined ? parseFloat(p.retailPrice) : undefined,
+        wholesalePrice: p.wholesalePrice !== undefined ? parseFloat(p.wholesalePrice) : undefined,
+        images: p.images,
+        videoUrl: p.videoUrl,
+        isAvailable: p.isAvailable,
+        views: p.views,
+        whatsappClicks: p.whatsappClicks,
+        updatedAt: new Date(),
+      }).where(eq(products.id, id)).returning();
+      
+      if (result.length === 0) {
+        return res.status(404).json({ error: "Producto no encontrado." });
+      }
+      return res.json(result[0]);
+    } catch (error) {
+      console.error("Error actualizando producto:", error);
+      return res.status(500).json({ error: "Error de base de datos actualizando producto." });
+    }
+  });
+
+  // Eliminar un producto
+  app.delete("/api/products/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const result = await db.delete(products).where(eq(products.id, id)).returning();
+      if (result.length === 0) {
+        return res.status(404).json({ error: "Producto no encontrado." });
+      }
+      return res.json({ success: true });
+    } catch (error) {
+      console.error("Error eliminando producto:", error);
+      return res.status(500).json({ error: "Error de base de datos eliminando producto." });
+    }
+  });
+
+  // Sembrar en lote productos de demostración
+  app.post("/api/products/seed", async (req, res) => {
+    try {
+      const list = req.body;
+      if (!Array.isArray(list)) {
+        return res.status(400).json({ error: "Se requiere un arreglo de productos." });
+      }
+      
+      const inserted = [];
+      for (const p of list) {
+        const row = await db.insert(products).values({
+          id: p.id,
+          sku: p.sku || "",
+          name: p.name || "",
+          description: p.description || "",
+          category: p.category || "",
+          retailPrice: parseFloat(p.retailPrice) || 0,
+          wholesalePrice: parseFloat(p.wholesalePrice) || 0,
+          images: p.images || [],
+          videoUrl: p.videoUrl || "",
+          isAvailable: p.isAvailable ?? true,
+          views: p.views || 0,
+          whatsappClicks: p.whatsappClicks || 0,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }).onConflictDoUpdate({
+          target: products.id,
+          set: {
+            sku: p.sku || "",
+            name: p.name || "",
+            description: p.description || "",
+            category: p.category || "",
+            retailPrice: parseFloat(p.retailPrice) || 0,
+            wholesalePrice: parseFloat(p.wholesalePrice) || 0,
+            images: p.images || [],
+            videoUrl: p.videoUrl || "",
+            isAvailable: p.isAvailable ?? true,
+            updatedAt: new Date(),
+          }
+        }).returning();
+        inserted.push(row[0]);
+      }
+      return res.json(inserted);
+    } catch (error) {
+      console.error("Error sembrando productos:", error);
+      return res.status(500).json({ error: "Error de base de datos sembrando productos." });
     }
   });
 
