@@ -37,10 +37,15 @@ export async function withDBRetry<T>(fn: () => Promise<T>, retries = 3, delay = 
       return await fn();
     } catch (err: any) {
       lastErr = err;
+      const errCode = err.code ? String(err.code).toUpperCase() : "";
       const errMsg = String(err.message || err).toLowerCase();
       
-      // Categorize classic TCP/stale pooled socket issues
+      // Categorize classic TCP, stale pooled socket, database crash/restart and query runner wrappers
       const isConnectionErr = 
+        !err.code ||                   // If no database engine error code, it is a low-level socket exception
+        errCode.startsWith("08") ||     // Connection Exception SQLSTATE class (08000, 08003, etc.)
+        errCode === "57P01" ||         // Admin shutdown / database restart
+        errCode === "57P03" ||         // Cannot connect now
         errMsg.includes("connection") || 
         errMsg.includes("econnreset") || 
         errMsg.includes("socket") || 
@@ -48,7 +53,8 @@ export async function withDBRetry<T>(fn: () => Promise<T>, retries = 3, delay = 
         errMsg.includes("terminated") || 
         errMsg.includes("timeout") ||
         errMsg.includes("handshake") ||
-        errMsg.includes("not queryable");
+        errMsg.includes("not queryable") ||
+        errMsg.includes("failed query"); // Catch drizzle Query failed wrapper errors
 
       if (isConnectionErr && attempt < retries) {
         console.warn(`[SQL Retry] Intento ${attempt}/${retries} fallido debido a error de conexión transitorio: "${err.message || err}". Reintentando en ${delay}ms...`);

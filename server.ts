@@ -147,7 +147,7 @@ async function startServer() {
                   cacheControl: "public, max-age=31536000", // cache aggressively on GCS EDGE CDN
                 },
               }),
-              15000,
+              90000,
               "GCS file upload"
             );
 
