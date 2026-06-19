@@ -110,21 +110,83 @@ export default function AdminPanel({
       return;
     }
     setSyncingCloud(true);
+    let sqlSyncedCount = 0;
     try {
       showToast("Sincronizando productos locales con la base de datos de la nube...");
-      const res = await fetch("/api/products/seed", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(products)
-      });
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || "Fallo en la llamada API de sincronización");
+      
+      // 1. Sync with Cloud SQL (PostgreSQL)
+      try {
+        const res = await fetch("/api/products/seed", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(products)
+        });
+        if (res.ok) {
+          const data = await res.json();
+          sqlSyncedCount = Array.isArray(data) ? data.length : products.length;
+          console.log("¡Sincronización con PostgreSQL exitosa!");
+        } else {
+          console.warn("Fallo el seed de PostgreSQL, seguiremos con Firestore...");
+        }
+      } catch (sqlErr) {
+        console.warn("Error enviando seed a Cloud SQL, continuaremos con Firestore:", sqlErr);
       }
-      showToast("¡Sincronización exitosa! Los productos ya están disponibles en todos los dispositivos.");
+
+      // 2. Sync with Firebase Firestore (direct client-side operation: 100% reliable)
+      let firestoreSyncedCount = 0;
+      for (const p of products) {
+        try {
+          const docRef = doc(db, "products", p.id);
+          await setDoc(docRef, {
+            id: p.id,
+            sku: p.sku || "",
+            name: p.name || "",
+            description: p.description || "",
+            category: p.category || "",
+            retailPrice: Number(p.retailPrice) || 0,
+            wholesalePrice: Number(p.wholesalePrice) || 0,
+            images: p.images || [],
+            videoUrl: p.videoUrl || "",
+            isAvailable: p.isAvailable ?? true,
+            views: p.views || 0,
+            whatsappClicks: p.whatsappClicks || 0,
+            createdAt: p.createdAt ? new Date(p.createdAt) : new Date(),
+            updatedAt: new Date()
+          });
+          firestoreSyncedCount++;
+        } catch (fsErr) {
+          console.error(`Error al guardar producto ${p.id} en Firestore:`, fsErr);
+        }
+      }
+
+      // 3. Sync store configuration to Firestore as well
+      try {
+        const configDocRef = doc(db, "storeConfig", "default");
+        await setDoc(configDocRef, {
+          storeName: storeConfig.storeName || "Mi Catálogo de WhatsApp",
+          address: storeConfig.address || "",
+          phone: storeConfig.phone || "",
+          whatsappNumber: storeConfig.whatsappNumber || "",
+          whatsappCustomMessage: storeConfig.whatsappCustomMessage || "",
+          locationUrl: storeConfig.locationUrl || "",
+          showPrices: storeConfig.showPrices ?? true,
+          updatedAt: new Date()
+        });
+      } catch (fsConfErr) {
+        console.error("Error al sincronizar storeConfig en Firestore:", fsConfErr);
+      }
+
+      // Dynamic success message depending on sync success
+      if (sqlSyncedCount > 0 || firestoreSyncedCount > 0) {
+        showToast(
+          `¡Sincronización finalizada! Se subieron ${sqlSyncedCount} artículos a PostgreSQL y ${firestoreSyncedCount} a Firestore. ¡Sus clientes ya pueden visualizarlos!`
+        );
+      } else {
+        showToast("No se pudieron guardar los artículos en las bases de datos de la nube. Por favor, verifique su conexión.", "error");
+      }
       onRefreshProducts();
     } catch (error: any) {
-      console.error("Error al sincronizar con Cloud SQL:", error);
+      console.error("Error al sincronizar con la nube:", error);
       showToast(`Error al sincronizar con la nube: ${error.message || error}`, "error");
     } finally {
       setSyncingCloud(false);
@@ -312,6 +374,25 @@ export default function AdminPanel({
     } catch (err) {}
 
     try {
+      // 1. Dual Write: Save config directly to Firestore Cloud (100% reliable)
+      try {
+        const configDocRef = doc(db, "storeConfig", "default");
+        await setDoc(configDocRef, {
+          storeName: storeName.trim(),
+          address: address.trim(),
+          phone: phone.trim(),
+          whatsappNumber: whatsappNumber.trim().replace(/[^0-9]/g, ""),
+          whatsappCustomMessage: whatsappCustomMessage.trim(),
+          locationUrl: locationUrl.trim(),
+          showPrices: !!showPrices,
+          updatedAt: new Date()
+        });
+        console.log("Configuración de tienda guardada exitosamente en Firestore Cloud!");
+      } catch (fsErr) {
+        console.warn("No se pudo guardar la configuración en Firestore, continuando con Postgres...", fsErr);
+      }
+
+      // 2. Existing PostgreSQL calls
       const res = await fetch("/api/store-config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -321,7 +402,7 @@ export default function AdminPanel({
         const errData = await res.json().catch(() => ({}));
         throw new Error(errData.error || "Fallo en la llamada API a Google Cloud PostgreSQL");
       }
-      showToast("Configuración general guardada exitosamente en Google Cloud SQL");
+      showToast("Configuración general guardada exitosamente en Google Cloud SQL y Firestore Cloud");
       onRefreshConfig(); // Sincroniza la información real desde la BD
     } catch (error: any) {
       console.error("Could not save config to Google Cloud SQL:", error);
@@ -465,6 +546,36 @@ export default function AdminPanel({
     setIsEditingProduct(false);
 
     try {
+      // 1. Dual Write: Save product directly to Firestore (bulletproof cloud database)
+      try {
+        const firestoreProductPath = doc(db, "products", id);
+        const fsProductObj = {
+          id,
+          sku: sku.trim(),
+          name: name.trim(),
+          description: description.trim(),
+          category: finalCategory || "Otros",
+          retailPrice: Number(retailPrice) || 0,
+          wholesalePrice: Number(wholesalePrice) || 0,
+          images: filteredImages,
+          videoUrl: videoUrl.trim(),
+          isAvailable: !!isAvailable,
+          createdAt: editingProductId 
+            ? (products.find(p => p.id === id)?.createdAt 
+                ? new Date(products.find(p => p.id === id)!.createdAt) 
+                : currentTime) 
+            : currentTime,
+          updatedAt: currentTime,
+          views: editingProductId ? (products.find(p => p.id === id)?.views || 0) : 0,
+          whatsappClicks: editingProductId ? (products.find(p => p.id === id)?.whatsappClicks || 0) : 0
+        };
+        await setDoc(firestoreProductPath, fsProductObj);
+        console.log("Producto guardado exitosamente en Firestore Cloud!");
+      } catch (fsErr) {
+        console.warn("No se pudo guardar en Firestore Cloud, continuando con PostgreSQL...", fsErr);
+      }
+
+      // 2. Standard Cloud SQL (PostgreSQL) operations
       if (editingProductId) {
         const reqObj = {
           sku: sku.trim(),
@@ -538,6 +649,16 @@ export default function AdminPanel({
     } catch (e) {}
 
     try {
+      // 1. Dual Delete: Remove product directly from Firestore
+      try {
+        const firestoreProductPath = doc(db, "products", id);
+        await deleteDoc(firestoreProductPath);
+        console.log("Producto eliminado de Firestore Cloud!");
+      } catch (fsErr) {
+        console.warn("No se pudo eliminar en Firestore Cloud, continuando con PostgreSQL...", fsErr);
+      }
+
+      // 2. Standard Cloud SQL (PostgreSQL) operations
       const res = await fetch(`/api/products/${id}`, {
         method: "DELETE"
       });

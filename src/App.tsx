@@ -7,7 +7,7 @@ import React, { useState, useEffect } from "react";
 import { Product, StoreConfig, AdminUser } from "./types";
 import { db, auth, OperationType, handleFirestoreError } from "./firebase";
 import { 
-  collection, query, getDocs, onSnapshot, doc, setDoc, orderBy, updateDoc, increment 
+  collection, query, getDocs, onSnapshot, doc, setDoc, orderBy, updateDoc, increment, getDoc, getDocFromServer, Timestamp 
 } from "firebase/firestore";
 import { 
   signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged,
@@ -104,6 +104,7 @@ export default function App() {
   });
   const [authError, setAuthError] = useState<string | null>(null);
   const [loadingApp, setLoadingApp] = useState(false);
+  const [isUsingCache, setIsUsingCache] = useState(false);
 
   // Modal Login form states
   const [showLoginModal, setShowLoginModal] = useState(false);
@@ -111,35 +112,108 @@ export default function App() {
   const [loginPassword, setLoginPassword] = useState("");
   const [localLoginError, setLocalLoginError] = useState<string | null>(null);
 
-  // Fetch functions for Cloud SQL / Express Backend
+  // Fetch functions with robust Cloud SQL / Firebase Firestore hybrid fallback
   const fetchProducts = async () => {
     try {
+      // 1. Try PostgreSQL first
       const res = await fetch("/api/products");
       if (res.ok) {
         const data = await res.json();
-        setProducts(data);
-        localStorage.setItem("local_products_cache", JSON.stringify(data));
-        const cats = Array.from(new Set(data.map((item: Product) => item.category).filter(Boolean)));
-        setCategories(["Todos", ...cats]);
-      } else {
-        throw new Error("Error cargando productos de la base de datos de Google Cloud");
+        if (data && data.length > 0) {
+          setIsUsingCache(false);
+          setProducts(data);
+          localStorage.setItem("local_products_cache", JSON.stringify(data));
+          const cats = Array.from(new Set(data.map((item: Product) => item.category).filter(Boolean)));
+          setCategories(["Todos", ...cats]);
+          return; // Successfully resolved from Postgres
+        }
       }
     } catch (e) {
-      console.error("Error al cargar productos desde la API, usando caché local:", e);
-      loadProductsStatically();
+      console.warn("No se pudo conectar a Cloud SQL (puede que el URL custom d-stores no esté vinculado), intentando Firestore...", e);
     }
+
+    // 2. Fallback to direct client-side Firebase Firestore
+    try {
+      const q = query(collection(db, "products"), orderBy("createdAt", "desc"));
+      const snapshot = await getDocs(q);
+      const fsProducts: Product[] = [];
+      snapshot.forEach((docSnap) => {
+        const d = docSnap.data();
+        fsProducts.push({
+          id: docSnap.id,
+          sku: d.sku || "",
+          name: d.name || "",
+          description: d.description || "",
+          category: d.category || "",
+          retailPrice: Number(d.retailPrice) || 0,
+          wholesalePrice: Number(d.wholesalePrice) || 0,
+          images: d.images || [],
+          videoUrl: d.videoUrl || "",
+          isAvailable: d.isAvailable ?? true,
+          views: d.views || 0,
+          whatsappClicks: d.whatsappClicks || 0,
+          createdAt: d.createdAt instanceof Timestamp ? d.createdAt.toDate() : (d.createdAt ? new Date(d.createdAt) : new Date()),
+          updatedAt: d.updatedAt instanceof Timestamp ? d.updatedAt.toDate() : (d.updatedAt ? new Date(d.updatedAt) : new Date()),
+        });
+      });
+
+      if (fsProducts.length > 0) {
+        console.log("Productos cargados exitosamente de Firestore Cloud!");
+        setIsUsingCache(false);
+        setProducts(fsProducts);
+        localStorage.setItem("local_products_cache", JSON.stringify(fsProducts));
+        const cats = Array.from(new Set(fsProducts.map((item: Product) => item.category).filter(Boolean)));
+        setCategories(["Todos", ...cats]);
+        return;
+      }
+    } catch (fsErr) {
+      console.error("Error al cargar productos desde Firestore, usando cache estático:", fsErr);
+    }
+
+    // 3. Last fallback: static cache
+    loadProductsStatically();
   };
 
   const fetchStoreConfig = async () => {
     try {
+      // 1. Try PostgreSQL first
       const res = await fetch("/api/store-config");
       if (res.ok) {
         const data = await res.json();
-        setStoreConfig(data);
-        localStorage.setItem("local_store_config_cache", JSON.stringify(data));
+        // If it is custom, not the hardcoded placeholder
+        if (data && data.storeName && data.storeName !== "Mi Catálogo de WhatsApp") {
+          setStoreConfig(data);
+          localStorage.setItem("local_store_config_cache", JSON.stringify(data));
+          return;
+        }
       }
     } catch (e) {
-      console.warn("No se pudo cargar la configuración de la tienda desde la API:", e);
+      console.warn("Error leyendo store-config de Cloud SQL, intentando Firestore...", e);
+    }
+
+    // 2. Fallback to direct client-side Firebase Firestore
+    try {
+      const docRef = doc(db, "storeConfig", "default");
+      const docSnap = await getDocFromServer(docRef);
+      if (docSnap.exists()) {
+        const d = docSnap.data();
+        const data: StoreConfig = {
+          storeName: d.storeName || "Mi Catálogo de WhatsApp",
+          address: d.address || "",
+          phone: d.phone || "",
+          whatsappNumber: d.whatsappNumber || "",
+          whatsappCustomMessage: d.whatsappCustomMessage || "",
+          locationUrl: d.locationUrl || "",
+          showPrices: d.showPrices ?? true,
+          updatedAt: d.updatedAt instanceof Timestamp ? d.updatedAt.toDate() : (d.updatedAt ? new Date(d.updatedAt) : new Date()),
+        };
+        console.log("Configuración de tienda cargada exitosamente de Firestore Cloud!");
+        setStoreConfig(data);
+        localStorage.setItem("local_store_config_cache", JSON.stringify(data));
+        return;
+      }
+    } catch (fsErr) {
+      console.error("Error leyendo store-config desde Firestore:", fsErr);
     }
   };
 
@@ -153,6 +227,36 @@ export default function App() {
   useEffect(() => {
     refreshAll();
   }, []);
+
+  // Synchronize local cached products automatically in background when admin mounts the app
+  useEffect(() => {
+    const autoSyncCachedProducts = async () => {
+      if (showAdminPanel && isUsingCache && products.length > 0) {
+        console.log("Detectados productos en cache local de administrador. Iniciando auto-sincronización con PostgreSQL en segundo plano...");
+        try {
+          const res = await fetch("/api/products/seed", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(products),
+          });
+          if (res.ok) {
+            console.log("¡Sincronización automática en segundo plano exitosa! Actualizando productos...");
+            const seedData = await res.json();
+            if (seedData && seedData.length > 0) {
+              setProducts(seedData);
+              setIsUsingCache(false);
+              localStorage.setItem("local_products_cache", JSON.stringify(seedData));
+              const cats = Array.from(new Set(seedData.map((item: Product) => item.category).filter(Boolean)));
+              setCategories(["Todos", ...cats]);
+            }
+          }
+        } catch (e) {
+          console.warn("No se pudo completar la auto-sincronización en segundo plano con Cloud SQL:", e);
+        }
+      }
+    };
+    autoSyncCachedProducts();
+  }, [showAdminPanel, isUsingCache, products.length]);
 
   // Dynamically update browser tab title based on store configuration
   useEffect(() => {
@@ -224,6 +328,7 @@ export default function App() {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
           setProducts(parsed);
+          setIsUsingCache(true);
           const cats = Array.from(new Set(parsed.map((item) => item.category).filter(Boolean)));
           setCategories(["Todos", ...cats]);
           setLoadingApp(false);
@@ -235,6 +340,7 @@ export default function App() {
     }
 
     setProducts([]);
+    setIsUsingCache(false);
     setCategories(["Todos"]);
     setLoadingApp(false);
   };
@@ -250,6 +356,7 @@ export default function App() {
       localStorage.setItem("local_products_cache", JSON.stringify(updated));
     } catch (e) {}
 
+    // 1. Try PostgreSQL tracking
     try {
       await fetch(`/api/products/${product.id}`, {
         method: "PUT",
@@ -258,6 +365,16 @@ export default function App() {
       });
     } catch (err) {
       console.warn("Could not track view metrics in Cloud SQL.", err);
+    }
+
+    // 2. Try Firestore tracking
+    try {
+      const docRef = doc(db, "products", product.id);
+      await updateDoc(docRef, {
+        views: increment(1)
+      });
+    } catch (fsErr) {
+      console.warn("Could not track view in Firestore:", fsErr);
     }
   };
 
@@ -269,6 +386,7 @@ export default function App() {
       localStorage.setItem("local_products_cache", JSON.stringify(updated));
     } catch (e) {}
 
+    // 1. Try PostgreSQL tracking
     try {
       await fetch(`/api/products/${product.id}`, {
         method: "PUT",
@@ -277,6 +395,16 @@ export default function App() {
       });
     } catch (err) {
       console.warn("Could not track WhatsApp click in Cloud SQL.", err);
+    }
+
+    // 2. Try Firestore tracking
+    try {
+      const docRef = doc(db, "products", product.id);
+      await updateDoc(docRef, {
+        whatsappClicks: increment(1)
+      });
+    } catch (fsErr) {
+      console.warn("Could not track WhatsApp click in Firestore:", fsErr);
     }
   };
 
@@ -509,6 +637,18 @@ export default function App() {
               <span>Estás autenticado como Editor Principal</span>
             </div>
           </div>
+
+          {isUsingCache && (
+            <div className="mb-6 bg-amber-50 border border-amber-200 text-amber-950 px-4 py-3 rounded-2xl text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-3xs">
+              <div className="flex items-start sm:items-center gap-2">
+                <AlertCircle className="text-amber-500 shrink-0 mt-0.5 sm:mt-0" size={18} />
+                <div>
+                  <span className="font-bold">⚠️ Tus artículos actuales provienen de la memoria caché local de este navegador.</span>
+                  <p className="opacity-90 mt-0.5">Tus clientes no podrán verlos desde sus dispositivos hasta que los sincronices con la base de datos de la nube. Por favor utiliza el botón "Sincronizar con la Nube" que está en el panel azul de abajo.</p>
+                </div>
+              </div>
+            </div>
+          )}
 
           <AdminPanel
             products={products}
