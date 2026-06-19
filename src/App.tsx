@@ -23,56 +23,8 @@ import ProductDetailsModal from "./components/ProductDetailsModal";
 import AdminPanel from "./components/AdminPanel";
 import { motion, AnimatePresence } from "motion/react";
 
-// Mock starter products for seeding the first time
-const DEMO_PRODUCTS: Product[] = [
-  {
-    id: "sample_sneakers",
-    sku: "CAL-ZAP-101",
-    name: "Zapatillas Deportivas Neon Max",
-    description: "Zapatillas cómodas ideales para runing, con suela amortiguadora de espuma eva, malla transpirable, refuerzos sintéticos contra el desgaste y cordones elásticos. Disponibles de la talla 38 a la 44.",
-    category: "Calzado",
-    retailPrice: 45,
-    wholesalePrice: 35,
-    images: [
-      "https://images.unsplash.com/photo-1542291026-7eec264c27ff?q=80&w=600&auto=format&fit=crop",
-      "https://images.unsplash.com/photo-1606107557195-0e29a4b5b4aa?q=80&w=600&auto=format&fit=crop"
-    ],
-    videoUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", // Classic placeholder
-    isAvailable: true
-  },
-  {
-    id: "sample_jacket",
-    sku: "ROP-ELT-202",
-    name: "Chaqueta Cortavientos Impermeable",
-    description: "Chaqueta rompevientos ultraligera de alta tecnología con recubrimiento hidrofóbico dwr. Capucha integrada ajustable, bolsillos laterales con cremallera termosellada y detalles reflectantes para caminatas nocturnas.",
-    category: "Ropa",
-    retailPrice: 80,
-    wholesalePrice: 62,
-    images: [
-      "https://images.unsplash.com/photo-1544816155-12df9643f363?q=80&w=600&auto=format&fit=crop",
-      "https://images.unsplash.com/photo-1591047139829-d91aecb6caea?q=80&w=600&auto=format&fit=crop"
-    ],
-    videoUrl: "",
-    isAvailable: true
-  },
-  {
-    id: "sample_watch",
-    sku: "ACC-REL-303",
-    name: "Reloj Inteligente Solar Midnight",
-    description: "Reloj deportivo inteligente con pantalla amoled de 1.4 pulgadas, sensor de ritmo cardíaco continuo, rastreo gps integrado, resistencia al agua hasta 50 metros de profundidad y batería de larga duración asistida por panel solar.",
-    category: "Accesorios",
-    retailPrice: 150,
-    wholesalePrice: 125,
-    images: [
-      "https://images.unsplash.com/photo-1523275335684-37898b6baf30?q=80&w=600&auto=format&fit=crop"
-    ],
-    videoUrl: "",
-    isAvailable: false
-  }
-];
-
 const INITIAL_STORE_CONFIG: StoreConfig = {
-  storeName: "TIENDA DEMO",
+  storeName: "Mi Catálogo de WhatsApp",
   address: "Av. Principal 123, Frente al Parque Comercial, La Paz",
   phone: "591 76543210",
   whatsappNumber: "59176543210",
@@ -263,23 +215,6 @@ export default function App() {
 
     return () => unsubAuth();
   }, []);
-
-  // Helper: Seed initial products to PostgreSQL Cloud SQL
-  const seedDemoProducts = async () => {
-    try {
-      const res = await fetch("/api/products/seed", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(DEMO_PRODUCTS)
-      });
-      if (!res.ok) throw new Error("Fallo al sembrar lote de demostración en Postgres");
-      await refreshAll();
-    } catch (err) {
-      console.warn("Could not auto-seed demo products because of API or Postgres constraints.", err);
-      setProducts([]);
-      setLoadingApp(false);
-    }
-  };
 
   // Helper: Static loading if listener fails due to offline/permission
   const loadProductsStatically = async () => {
@@ -582,7 +517,6 @@ export default function App() {
             setStoreConfig={setStoreConfig}
             onRefreshProducts={refreshAll}
             onRefreshConfig={refreshAll}
-            onSeedDemo={seedDemoProducts}
           />
         </div>
       ) : (

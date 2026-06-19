@@ -23,7 +23,6 @@ interface AdminPanelProps {
   setStoreConfig: React.Dispatch<React.SetStateAction<StoreConfig>>;
   onRefreshProducts: () => void;
   onRefreshConfig: () => void;
-  onSeedDemo?: () => void;
 }
 
 const CATEGORY_PRESETS = ["Calzado", "Ropa", "Accesorios", "Hogar", "Tecnología", "Salud y Belleza", "Deportes", "Otros"];
@@ -35,7 +34,6 @@ export default function AdminPanel({
   setStoreConfig,
   onRefreshProducts,
   onRefreshConfig,
-  onSeedDemo,
 }: AdminPanelProps) {
   // Calculated engagement metrics for User Feedback & Interest Dashboard
   const totalViews = products.reduce((acc, p) => acc + (p.views || 0), 0);
@@ -104,11 +102,79 @@ export default function AdminPanel({
     setTimeout(() => setMessage(null), 4000);
   };
 
-  // Preserve original high-fidelity megabyte-sized images or videos selected by the store editor as requested
+  // Highly professional client-side image compression to support massive mega-pixel files
   const compressImage = (file: File): Promise<File> => {
     return new Promise<File>((resolve) => {
-      // Return file completely untouched to preserve original quality and megabyte-scale dimensions
-      resolve(file);
+      // If it is not an image, resolve immediately without modification
+      if (!file.type.startsWith("image/")) {
+        resolve(file);
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+          // Max dimension for web catalog optimization (balanced size and crispness)
+          const MAX_WIDTH = 1200;
+          const MAX_HEIGHT = 1200;
+          let width = img.width;
+          let height = img.height;
+
+          // Calculate aspect ratio scale
+          if (width > height) {
+            if (width > MAX_WIDTH) {
+              height = Math.round((height * MAX_WIDTH) / width);
+              width = MAX_WIDTH;
+            }
+          } else {
+            if (height > MAX_HEIGHT) {
+              width = Math.round((width * MAX_HEIGHT) / height);
+              height = MAX_HEIGHT;
+            }
+          }
+
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            resolve(file);
+            return;
+          }
+
+          // Use high quality image smoothing
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = "high";
+          ctx.drawImage(img, 0, 0, width, height);
+
+          // Convert canvas to Blob (quality 0.83 is ideal visual quality / file size ratio)
+          canvas.toBlob(
+            (blob) => {
+              if (blob) {
+                const compressedFile = new File([blob], file.name, {
+                  type: "image/jpeg",
+                  lastModified: Date.now(),
+                });
+                resolve(compressedFile);
+              } else {
+                resolve(file);
+              }
+            },
+            "image/jpeg",
+            0.83
+          );
+        };
+        img.onerror = () => {
+          resolve(file);
+        };
+        img.src = event.target?.result as string;
+      };
+      reader.onerror = () => {
+        resolve(file);
+      };
+      reader.readAsDataURL(file);
     });
   };
 
@@ -122,7 +188,21 @@ export default function AdminPanel({
 
     try {
       const formData = new FormData();
-      for (const file of Array.from(files) as File[]) {
+      const filesArray = Array.from(files) as File[];
+
+      // Compress and process all selected images in parallel before sending to server
+      const processedFiles = await Promise.all(
+        filesArray.map(async (file) => {
+          try {
+            return await compressImage(file);
+          } catch (compressErr) {
+            console.error("Fallo al comprimir archivo individual, se subirá original:", compressErr);
+            return file;
+          }
+        })
+      );
+
+      for (const file of processedFiles) {
         formData.append("files", file);
       }
 
@@ -167,7 +247,7 @@ export default function AdminPanel({
         setVideoUrl(lastVideo);
       }
 
-      showToast(`¡Carga completada! Subidos ${urls.length} archivo(s) al servidor de Google Cloud.`);
+      showToast(`¡Carga completada! Subidos ${urls.length} archivo(s) optimizado(s) con éxito.`);
     } catch (err: any) {
       console.error("Carga de archivos fallida: ", err);
       setUploadError("Error en la carga rápida. El archivo puede ser demasiado grande o no compatible.");
@@ -877,15 +957,6 @@ export default function AdminPanel({
               <div className="p-12 text-center text-slate-400 flex flex-col items-center justify-center gap-4">
                 <Store size={40} className="text-slate-300 mb-2" />
                 <span className="text-sm font-medium text-slate-600">No se han registrado productos en la base de datos de la nube.</span>
-                {onSeedDemo && (
-                  <button
-                    onClick={onSeedDemo}
-                    className="px-5 py-2.5 bg-amber-500 hover:bg-amber-655 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-amber-500/10 flex items-center gap-2 cursor-pointer mt-2"
-                  >
-                    <Sparkles size={14} className="text-amber-100 animate-pulse" />
-                    <span>Cargar Productos de Demostración</span>
-                  </button>
-                )}
               </div>
             ) : (
               <div className="overflow-x-auto">

@@ -64,15 +64,49 @@ async function startServer() {
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
-  // Expose virtual directory /uploads to resolve static files with highly optimized cache settings (1 year)
-  app.use(
-    "/uploads",
-    express.static(uploadDir, {
-      maxAge: "365d",
-      immutable: true,
-      fallthrough: false,
-    })
-  );
+  // Expose virtual directory /uploads to resolve static files or stream from GCS with background write-back cache
+  app.get("/uploads/:filename", async (req, res) => {
+    const { filename } = req.params;
+    const localFilePath = path.join(uploadDir, filename);
+
+    // 1. If stored locally, serve it instantly with aggressive 1-year caching
+    if (fs.existsSync(localFilePath)) {
+      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      return res.sendFile(localFilePath);
+    }
+
+    // 2. If GCS is active, check GCS and stream it
+    if (gcsBucket) {
+      try {
+        const gcsFile = gcsBucket.file(filename);
+        const [exists] = await gcsFile.exists();
+
+        if (exists) {
+          const [metadata] = await gcsFile.getMetadata();
+          res.setHeader("Content-Type", metadata.contentType || "application/octet-stream");
+          res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+
+          // Pipe the GCS stream directly to the response
+          gcsFile.createReadStream().pipe(res);
+
+          // Background task: write-back cache the file locally so subsequent requests are lightning-fast
+          try {
+            gcsFile.download({ destination: localFilePath }).catch((dwErr) => {
+              console.warn(`[Google Cloud] No se pudo guardar copia local en caché para "${filename}":`, dwErr.message || dwErr);
+            });
+          } catch (writeErr) {
+            // Safe to ignore in read-only setups
+          }
+          return;
+        }
+      } catch (gcsReadErr: any) {
+        console.warn(`[Google Cloud] Error intentando transmitir "${filename}" desde GCS:`, gcsReadErr.message || gcsReadErr);
+      }
+    }
+
+    // 3. Fallback
+    return res.status(404).json({ error: "Archivo no encontrado" });
+  });
 
   // Helper to guarantee an asynchronous call completes or times out to prevent HTTP request hang ups
   const runWithTimeout = <T>(promise: Promise<T>, ms: number, fallbackLabel: string): Promise<T> => {
@@ -101,10 +135,10 @@ async function startServer() {
       for (const file of files) {
         if (gcsBucket) {
           try {
-            console.log(`[Google Cloud] Subiendo "${file.filename}" a GCS con un límite de espera de 2.5s...`);
+            // Uplifted timeout limit to 15 seconds to fully support direct camera snaps and video uploads
+            console.log(`[Google Cloud] Subiendo "${file.filename}" duraderamente a GCS con límite de espera de 15s...`);
             const gcsFile = gcsBucket.file(file.filename);
             
-            // Run the bucket upload with a fast 2500ms timeout limit
             await runWithTimeout(
               gcsBucket.upload(file.path, {
                 destination: file.filename,
@@ -113,29 +147,29 @@ async function startServer() {
                   cacheControl: "public, max-age=31536000", // cache aggressively on GCS EDGE CDN
                 },
               }),
-              2500,
+              15000,
               "GCS file upload"
             );
 
             try {
-              // Explicitly make public with a 1sec timeout
-              await runWithTimeout(gcsFile.makePublic(), 1000, "GCS makePublic");
+              // Mark file public with 2 seconds timeout if possible, else it will stream authorized via our server route anyway
+              await runWithTimeout(gcsFile.makePublic(), 2000, "GCS makePublic");
             } catch (aclErr: any) {
-              console.warn("[Google Cloud] Could not alter ACL/make file public (Normal if Uniform Bucket Access is active):", aclErr.message || aclErr);
+              console.warn("[Google Cloud] Could not alter ACL/make file public (Normal if Uniform Bucket Access is active). Streaming fallback will handle this:", aclErr.message || aclErr);
             }
 
-            // Construct generic public URL of standard public buckets
-            const publicUrl = `https://storage.googleapis.com/${gcsBucketName}/${file.filename}`;
-            urls.push(publicUrl);
+            // Always use uniform relative path redirecting requests through our unified express media router
+            urls.push(`/uploads/${file.filename}`);
 
-            // Housekeeping: remove local ephemeral container file immediately to save disk space
+            // Housekeeping: remove local ephemeral container file immediately to save local disk space,
+            // as its durable version now lives safely in GCS
             try {
               fs.unlinkSync(file.path);
             } catch (unlinkErr) {
               console.warn("Fallo temporal limpiando archivo local:", unlinkErr);
             }
           } catch (gcsUploadErr: any) {
-            console.warn(`[Google Cloud] Desvío de emergencia cargando a GCS (usando local): ${gcsUploadErr.message || gcsUploadErr}`);
+            console.warn(`[Google Cloud] Desvío de emergencia cargando a GCS (usando almacenamiento local): ${gcsUploadErr.message || gcsUploadErr}`);
             // Fallback to local URL if GCS fails or times out to avoid breaking user workflows
             urls.push(`/uploads/${file.filename}`);
           }
