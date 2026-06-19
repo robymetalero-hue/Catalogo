@@ -19,10 +19,10 @@ service cloud.firestore {
     function isSignedIn() {
       return request.auth != null;
     }
-    // Admin access validation: matches robymetalero@gmail.com with verified email or matching admins document
+    // Admin access validation: matches robymetalero@gmail.com or matching admins document
     function isAdmin() {
       return isSignedIn() && (
-        (request.auth.token.email == "robymetalero@gmail.com" && request.auth.token.email_verified == true) ||
+        request.auth.token.email == "robymetalero@gmail.com" ||
         exists(/databases/$(database)/documents/admins/$(request.auth.uid))
       );
     }

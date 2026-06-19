@@ -108,17 +108,17 @@ export default function ProductDetailsModal({
               <div className="relative aspect-square rounded-2xl bg-slate-100 border border-slate-100 overflow-hidden shadow-3xs flex items-center justify-center">
                 {/* Immersive Shimmer Skeleton Loader */}
                 {imageLoading && (
-                  <div className="absolute inset-0 bg-slate-200 animate-pulse flex flex-col items-center justify-center gap-2 z-10">
-                    <ImageIcon size={28} className="text-slate-400 animate-bounce" />
+                  <div className="absolute inset-0 bg-slate-200/90 flex flex-col items-center justify-center gap-2 z-10 transition-opacity duration-300">
+                    <ImageIcon size={28} className="text-slate-400 animate-pulse" />
                     <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest leading-none">Cargando recurso...</span>
                   </div>
                 )}
 
                 <motion.div 
                   key={isPlayingVideo ? "video" : activeImageIndex}
-                  initial={{ opacity: 0, scale: 1.02 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ duration: 0.3 }}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.25 }}
                   className="w-full h-full"
                 >
                   {isPlayingVideo && product.videoUrl ? (
@@ -149,7 +149,7 @@ export default function ProductDetailsModal({
                       referrerPolicy="no-referrer"
                       loading="lazy"
                       onLoad={() => setImageLoading(false)}
-                      className={`w-full h-full object-cover transition-all duration-300 ${imageLoading ? "blur-xs scale-98 opacity-0" : "blur-none scale-100 opacity-100"}`}
+                      className={`w-full h-full object-cover transition-all duration-300 ease-out ${imageLoading ? "opacity-0 blur-xs" : "opacity-100 blur-none"}`}
                     />
                   )}
                 </motion.div>

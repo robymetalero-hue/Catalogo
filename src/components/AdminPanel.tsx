@@ -101,70 +101,11 @@ export default function AdminPanel({
     setTimeout(() => setMessage(null), 4000);
   };
 
-  // Client-side image compression to convert images to highly optimized 1200px JPEG files
+  // Preserve original high-fidelity megabyte-sized images or videos selected by the store editor as requested
   const compressImage = (file: File): Promise<File> => {
     return new Promise<File>((resolve) => {
-      // Non-images (like mp4 videos) are forwarded directly with zero delay
-      if (!file.type.startsWith("image/")) {
-        resolve(file);
-        return;
-      }
-
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const img = new Image();
-        img.onload = () => {
-          // Max boundaries of 1200px (high-fidelity retina standard but extreme speed)
-          const MAX_WIDTH = 1200;
-          const MAX_HEIGHT = 1200;
-          let width = img.width;
-          let height = img.height;
-
-          if (width > MAX_WIDTH || height > MAX_HEIGHT) {
-            if (width > height) {
-              height = Math.round((height * MAX_WIDTH) / width);
-              width = MAX_WIDTH;
-            } else {
-              width = Math.round((width * MAX_HEIGHT) / height);
-              height = MAX_HEIGHT;
-            }
-          }
-
-          const canvas = document.createElement("canvas");
-          canvas.width = width;
-          canvas.height = height;
-
-          const ctx = canvas.getContext("2d");
-          if (!ctx) {
-            resolve(file);
-            return;
-          }
-
-          // Draw the image onto the scaling canvas
-          ctx.drawImage(img, 0, 0, width, height);
-
-          // Render canvas to blob with 82% quality to maximize bandwidth savings (averages ~100-200kb total)
-          canvas.toBlob(
-            (blob) => {
-              if (!blob) {
-                resolve(file);
-                return;
-              }
-              const compressedFile = new File([blob], file.name.replace(/\.[^/.]+$/, "") + ".jpg", {
-                type: "image/jpeg",
-                lastModified: Date.now(),
-              });
-              resolve(compressedFile);
-            },
-            "image/jpeg",
-            0.82
-          );
-        };
-        img.onerror = () => resolve(file);
-        img.src = event.target?.result as string;
-      };
-      reader.onerror = () => resolve(file);
-      reader.readAsDataURL(file);
+      // Return file completely untouched to preserve original quality and megabyte-scale dimensions
+      resolve(file);
     });
   };
 

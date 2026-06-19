@@ -28,13 +28,15 @@ const ProductCard: React.FC<ProductCardProps> = ({
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [imageLoading, setImageLoading] = useState(true);
 
-  React.useEffect(() => {
-    setImageLoading(true);
-  }, [currentImageIndex, product.id]);
-
   const images = product.images && product.images.length > 0
     ? product.images
     : ["https://images.unsplash.com/photo-1544816155-12df9643f363?q=80&w=600&auto=format&fit=crop"]; // beautiful default product placeholder
+
+  const currentImageUrl = images[currentImageIndex];
+
+  React.useEffect(() => {
+    setImageLoading(true);
+  }, [currentImageUrl]);
 
   const handleNextImage = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -59,34 +61,30 @@ const ProductCard: React.FC<ProductCardProps> = ({
   return (
     <motion.div
       id={`product-card-${product.id}`}
-      className="group flex flex-col h-full bg-white rounded-2xl border border-slate-100 hover:border-amber-300/60 shadow-xs hover:shadow-xl overflow-hidden cursor-pointer relative animate-fade-in"
+      className="group flex flex-col h-full bg-white rounded-2xl border border-slate-100 hover:border-amber-400/80 shadow-xs hover:shadow-xl overflow-hidden cursor-pointer relative animate-fade-in transition-shadow duration-300"
       onClick={() => onOpenDetails(product)}
       initial={{ opacity: 0, y: 16 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true, margin: "-10px" }}
-      whileHover={{ y: -6 }}
+      whileHover={{ scale: 1.012 }}
       transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
     >
       {/* Image Gallery Container */}
       <div className="relative aspect-square w-full bg-slate-100 overflow-hidden">
         {/* Skeleton Shimmer Overlay */}
         {imageLoading && (
-          <div className="absolute inset-0 bg-slate-200 animate-pulse flex items-center justify-center">
-            <ImageIcon size={24} className="text-slate-300 animate-bounce" />
+          <div className="absolute inset-0 bg-slate-200/90 flex items-center justify-center z-10 transition-opacity duration-300">
+            <ImageIcon size={24} className="text-slate-400 animate-pulse" />
           </div>
         )}
 
-        <motion.img
-          key={currentImageIndex}
+        <img
           src={images[currentImageIndex]}
           alt={product.name}
           referrerPolicy="no-referrer"
           loading="lazy"
           onLoad={() => setImageLoading(false)}
-          className={`w-full h-full object-cover transition-all duration-300 ${imageLoading ? 'blur-xs scale-98 opacity-0' : 'blur-none scale-100 opacity-100'}`}
-          initial={{ scale: 1.02 }}
-          animate={{ scale: 1.00 }}
-          transition={{ duration: 0.25 }}
+          className={`w-full h-full object-cover transition-all duration-500 ease-out font-sans group-hover:scale-106 ${imageLoading ? 'opacity-0 scale-98 blur-xs' : 'opacity-100 scale-100 blur-none'}`}
         />
 
         {/* Subtle hover zoom overlay for absolute premium feel */}
