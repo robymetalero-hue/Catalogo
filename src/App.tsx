@@ -5,11 +5,14 @@
 
 import React, { useState, useEffect } from "react";
 import { Product, StoreConfig, AdminUser } from "./types";
-import { auth } from "./firebase";
+import { db, auth } from "./firebase";
 import { 
   signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged,
   signInWithEmailAndPassword, createUserWithEmailAndPassword
 } from "firebase/auth";
+import { 
+  collection, getDocs, doc, getDoc, updateDoc, query, orderBy, setDoc 
+} from "firebase/firestore";
 import { 
   Lock, LogOut, CheckCircle2, ShoppingBag, Grid, Compass, Smartphone, AlertCircle, X, ShieldAlert, Share2 
 } from "lucide-react";
@@ -111,31 +114,40 @@ export default function App() {
   const [loginPassword, setLoginPassword] = useState("");
   const [localLoginError, setLocalLoginError] = useState<string | null>(null);
 
-  // Fetch functions setting Google Cloud SQL (PostgreSQL) as the only primary source of truth
+  // Fetch functions setting Google Cloud Firestore as the only primary source of truth
   const fetchProducts = async () => {
     try {
-      const res = await fetch("/api/products");
-      if (res.ok) {
-        const data = await res.json();
-        // Standardize timestamps and prices
-        const processedProducts = data.map((p: any) => ({
-          ...p,
-          createdAt: p.createdAt ? new Date(p.createdAt) : new Date(),
-          updatedAt: p.updatedAt ? new Date(p.updatedAt) : new Date(),
-        }));
-        
-        setIsUsingCache(false);
-        setProducts(processedProducts);
-        localStorage.setItem("local_products_cache", JSON.stringify(processedProducts));
-        const cats = Array.from(new Set(processedProducts.map((item: Product) => item.category).filter(Boolean)));
-        setCategories(["Todos", ...cats]);
-        return;
-      } else {
-        const errJson = await res.json();
-        console.warn("Error del servidor obteniendo productos:", errJson);
-      }
+      const q = query(collection(db, "products"), orderBy("createdAt", "desc"));
+      const querySnapshot = await getDocs(q);
+      const processedProducts: Product[] = [];
+      querySnapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        processedProducts.push({
+          id: docSnap.id,
+          sku: data.sku || "",
+          name: data.name || "Sin nombre",
+          description: data.description || "",
+          category: data.category || "General",
+          retailPrice: Number(data.retailPrice) || 0,
+          wholesalePrice: Number(data.wholesalePrice) || 0,
+          images: data.images || [],
+          videoUrl: data.videoUrl || "",
+          isAvailable: data.isAvailable ?? true,
+          views: Number(data.views) || 0,
+          whatsappClicks: Number(data.whatsappClicks) || 0,
+          createdAt: data.createdAt ? new Date(data.createdAt) : new Date(),
+          updatedAt: data.updatedAt ? new Date(data.updatedAt) : new Date(),
+        } as Product);
+      });
+
+      setIsUsingCache(false);
+      setProducts(processedProducts);
+      localStorage.setItem("local_products_cache", JSON.stringify(processedProducts));
+      const cats = Array.from(new Set(processedProducts.map((item: Product) => item.category).filter(Boolean)));
+      setCategories(["Todos", ...cats]);
+      return;
     } catch (e) {
-      console.warn("No se pudo conectar a Google Cloud SQL, intentando Caché local:", e);
+      console.warn("No se pudo conectar a Firestore, intentando Caché local:", e);
     }
 
     // Fallback: static cache
@@ -144,9 +156,10 @@ export default function App() {
 
   const fetchStoreConfig = async () => {
     try {
-      const res = await fetch("/api/store-config");
-      if (res.ok) {
-        const data = await res.json();
+      const docRef = doc(db, "storeConfig", "default");
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        const data = docSnap.data();
         const configData: StoreConfig = {
           storeName: data.storeName || "Mi Catálogo de WhatsApp",
           address: data.address || "",
@@ -160,9 +173,23 @@ export default function App() {
         setStoreConfig(configData);
         localStorage.setItem("local_store_config_cache", JSON.stringify(configData));
         return;
+      } else {
+        // Fallback or seed default config
+        const defaultDoc = {
+          storeName: "Mi Catálogo de WhatsApp",
+          address: "Av. Principal 123, Frente al Parque Comercial, La Paz",
+          phone: "591 76543210",
+          whatsappNumber: "59176543210",
+          whatsappCustomMessage: "¡Hola! Vi el artículo: {productName} (SKU: {productSku}) en tu catálogo virtual y me gustaría reservarlo.",
+          locationUrl: "https://maps.google.com/?q=-16.500000,-68.150000",
+          showPrices: true,
+          updatedAt: new Date().toISOString()
+        };
+        setStoreConfig(defaultDoc);
+        localStorage.setItem("local_store_config_cache", JSON.stringify(defaultDoc));
       }
     } catch (e) {
-      console.warn("Error leyendo store-config de Google Cloud SQL:", e);
+      console.warn("Error leyendo store-config de Firestore:", e);
     }
 
     // Fallback cache
@@ -313,15 +340,12 @@ export default function App() {
       localStorage.setItem("local_products_cache", JSON.stringify(updated));
     } catch (e) {}
 
-    // Track in Google Cloud SQL
+    // Track in Google Cloud Firestore Directly
     try {
-      await fetch(`/api/products/${product.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ views: (product.views || 0) + 1 })
-      });
+      const docRef = doc(db, "products", product.id);
+      await updateDoc(docRef, { views: (product.views || 0) + 1 });
     } catch (err) {
-      console.warn("Could not track view metrics in Cloud SQL.", err);
+      console.warn("Could not track view metrics in Firestore.", err);
     }
   };
 
@@ -333,15 +357,12 @@ export default function App() {
       localStorage.setItem("local_products_cache", JSON.stringify(updated));
     } catch (e) {}
 
-    // Track in Google Cloud SQL
+    // Track in Google Cloud Firestore Directly
     try {
-      await fetch(`/api/products/${product.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ whatsappClicks: (product.whatsappClicks || 0) + 1 })
-      });
+      const docRef = doc(db, "products", product.id);
+      await updateDoc(docRef, { whatsappClicks: (product.whatsappClicks || 0) + 1 });
     } catch (err) {
-      console.warn("Could not track WhatsApp click in Cloud SQL.", err);
+      console.warn("Could not track WhatsApp click in Firestore.", err);
     }
   };
 

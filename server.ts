@@ -4,7 +4,7 @@ import fs from "fs";
 import multer from "multer";
 import { createServer as createViteServer } from "vite";
 import { Storage } from "@google-cloud/storage";
-import admin from "firebase-admin";
+import { initializeApp, getApps, getApp, App } from "firebase-admin/app";
 import { getFirestore, Firestore } from "firebase-admin/firestore";
 
 // Load configuration from firebase-applet-config.json safely
@@ -14,13 +14,18 @@ const firebaseConfig = JSON.parse(
 
 let firestoreDb: Firestore;
 try {
-  admin.initializeApp({
-    projectId: firebaseConfig.projectId,
-  });
+  let adminApp: App;
+  if (getApps().length === 0) {
+    adminApp = initializeApp({
+      projectId: firebaseConfig.projectId,
+    });
+  } else {
+    adminApp = getApp();
+  }
   // If a specific databaseId is set in the configuration, getFirestore uses it. Otherwise defaults.
   firestoreDb = firebaseConfig.firestoreDatabaseId 
-    ? getFirestore(firebaseConfig.firestoreDatabaseId)
-    : getFirestore();
+    ? getFirestore(adminApp, firebaseConfig.firestoreDatabaseId)
+    : getFirestore(adminApp);
   console.log(`[Firebase] Firestore activo habilitado para el proyecto: "${firebaseConfig.projectId}" y base de datos: "${firebaseConfig.firestoreDatabaseId || '(default)'}"`);
 } catch (fbInitErr: any) {
   console.warn("[Firebase] No se pudo inicializar firebase-admin:", fbInitErr.message || fbInitErr);

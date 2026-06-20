@@ -5,7 +5,8 @@
 
 import React, { useState, useEffect } from "react";
 import { Product, StoreConfig } from "../types";
-// No longer importing Firebase Storage or Firestore database modules as we use PostgreSQL Google Cloud SQL and standard media server endpoints.
+import { db } from "../firebase";
+import { doc, setDoc, deleteDoc, updateDoc } from "firebase/firestore";
 import { 
   Store, Plus, Edit2, Trash2, Save, X, Eye, EyeOff, Video, Link, Check, Image as ImageIcon, Sparkles, FolderPlus, Phone, TrendingUp, ThumbsUp, BarChart2, Upload, CloudUpload, RefreshCw,
   Database, HardDrive, AlertTriangle, CheckCircle, Shield, HelpCircle, Terminal
@@ -133,64 +134,65 @@ export default function AdminPanel({
       return;
     }
     setSyncingCloud(true);
-    let sqlSyncedCount = 0;
-    let lastSqlError = "";
+    let syncedCount = 0;
     try {
-      showToast("Sincronizando productos locales con la base de datos PostgreSQL de Google Cloud...");
+      showToast("Sincronizando productos directamente con Google Cloud Firestore...");
       
-      // 1. Sync with Cloud SQL (PostgreSQL)
-      try {
-        const res = await fetch("/api/products/seed", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(products)
-        });
-        if (res.ok) {
-          const data = await res.json();
-          sqlSyncedCount = Array.isArray(data) ? data.length : products.length;
-          console.log("¡Sincronización con PostgreSQL exitosa!");
-        } else {
-          try {
-            const errJson = await res.json();
-            lastSqlError = errJson.error || `Código HTTP: ${res.status}`;
-          } catch (e) {
-            lastSqlError = `Código HTTP: ${res.status}`;
-          }
-        }
-      } catch (sqlErr: any) {
-        lastSqlError = sqlErr.message || String(sqlErr);
+      // 1. Sync with Firestore (each product documents)
+      for (const product of products) {
+        const docRef = doc(db, "products", product.id);
+        const docData = {
+          sku: product.sku || "",
+          name: product.name || "",
+          description: product.description || "",
+          category: product.category || "General",
+          retailPrice: Number(product.retailPrice) || 0,
+          wholesalePrice: Number(product.wholesalePrice) || 0,
+          images: product.images || [],
+          videoUrl: product.videoUrl || "",
+          isAvailable: product.isAvailable ?? true,
+          views: Number(product.views) || 0,
+          whatsappClicks: Number(product.whatsappClicks) || 0,
+          createdAt: product.createdAt instanceof Date ? product.createdAt.toISOString() : (product.createdAt || new Date().toISOString()),
+          updatedAt: new Date().toISOString()
+        };
+        await setDoc(docRef, docData, { merge: true });
+        syncedCount++;
       }
 
-      // 2. Sync store configuration to PostgreSQL as well
+      // 2. Sync store configuration to Firestore as well
       let configSaved = false;
       try {
-        const res = await fetch("/api/store-config", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(storeConfig)
-        });
-        if (res.ok) {
-          configSaved = true;
-        }
+        const configRef = doc(db, "storeConfig", "default");
+        await setDoc(configRef, {
+          id: "default",
+          storeName: storeConfig.storeName || "Mi Catálogo de WhatsApp",
+          address: storeConfig.address || "",
+          phone: storeConfig.phone || "",
+          whatsappNumber: storeConfig.whatsappNumber || "",
+          whatsappCustomMessage: storeConfig.whatsappCustomMessage || "",
+          locationUrl: storeConfig.locationUrl || "",
+          showPrices: storeConfig.showPrices ?? true,
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+        configSaved = true;
       } catch (err) {
-        console.warn("Fallo sincronizando config en la nube:", err);
+        console.warn("Fallo sincronizando config en la nube Firestore:", err);
       }
 
-      if (sqlSyncedCount > 0) {
-        let msg = `¡Sincronización finalizada! Se guardaron ${sqlSyncedCount} artículos de forma segura en Google Cloud SQL.`;
+      if (syncedCount > 0) {
+        let msg = `¡Sincronización finalizada! Se guardaron ${syncedCount} artículos de forma segura en Google Cloud Firestore.`;
         if (configSaved) {
           msg += " Se actualizó la configuración de la tienda.";
         }
         showToast(msg);
       } else {
-        let errMsg = "No se pudieron guardar los artículos en Google Cloud SQL.";
-        if (lastSqlError) errMsg += ` [Detalle: ${lastSqlError}]`;
-        showToast(errMsg, "error");
+        showToast("No se pudieron guardar los artículos en Google Cloud Firestore.", "error");
       }
       onRefreshProducts();
     } catch (error: any) {
-      console.error("Error al sincronizar con la nube:", error);
-      showToast(`Error al sincronizar: ${error.message || error}`, "error");
+      console.error("Error al sincronizar con Firestore:", error);
+      showToast(`Error al sincronizar con Firestore: ${error.message || error}`, "error");
     } finally {
       setSyncingCloud(false);
     }
@@ -441,24 +443,26 @@ export default function AdminPanel({
     } catch (err) {}
 
     try {
-      // Save directly to our standard Express API
-      const res = await fetch("/api/store-config", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updatedData)
-      });
+      // Save directly to Google Cloud Firestore
+      const docRef = doc(db, "storeConfig", "default");
+      await setDoc(docRef, {
+        id: "default",
+        storeName: updatedData.storeName || "Mi Catálogo de WhatsApp",
+        address: updatedData.address || "",
+        phone: updatedData.phone || "",
+        whatsappNumber: updatedData.whatsappNumber || "",
+        whatsappCustomMessage: updatedData.whatsappCustomMessage || "",
+        locationUrl: updatedData.locationUrl || "",
+        showPrices: updatedData.showPrices ?? true,
+        updatedAt: updatedData.updatedAt instanceof Date ? updatedData.updatedAt.toISOString() : (updatedData.updatedAt || new Date().toISOString())
+      }, { merge: true });
 
-      if (!res.ok) {
-        const errJson = await res.json();
-        throw new Error(errJson.error || `HTTP ${res.status}`);
-      }
-
-      console.log("Configuración de tienda guardada exitosamente en Google Cloud SQL!");
-      showToast("Configuración general guardada exitosamente en Google Cloud SQL");
+      console.log("Configuración de tienda guardada exitosamente en Firestore!");
+      showToast("Configuración general guardada exitosamente en Firestore");
       onRefreshConfig(); // Synchronize the real config from DB
     } catch (error: any) {
-      console.error("Could not write config to Google Cloud SQL:", error);
-      showToast(`Error al guardar configuración en Google Cloud SQL: ${error.message || error}`, "error");
+      console.error("Could not write config to Firestore:", error);
+      showToast(`Error al guardar configuración en Firestore: ${error.message || error}`, "error");
     } finally {
       setLoading(false);
     }
@@ -585,33 +589,35 @@ export default function AdminPanel({
     setIsEditingProduct(false);
 
     try {
-      // Save product directly to Google Cloud SQL (PostgreSQL API)
-      let res;
-      if (editingProductId) {
-        res = await fetch(`/api/products/${editingProductId}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(reqObj)
-        });
-      } else {
-        res = await fetch("/api/products", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(reqObj)
-        });
+      // Save product directly to Google Cloud Firestore
+      const docRef = doc(db, "products", id);
+      const docData: any = {
+        sku: reqObj.sku,
+        name: reqObj.name,
+        description: reqObj.description,
+        category: reqObj.category,
+        retailPrice: Number(reqObj.retailPrice) || 0,
+        wholesalePrice: Number(reqObj.wholesalePrice) || 0,
+        images: reqObj.images || [],
+        videoUrl: reqObj.videoUrl || "",
+        isAvailable: reqObj.isAvailable ?? true,
+        updatedAt: currentTime.toISOString()
+      };
+
+      if (!editingProductId) {
+        docData.createdAt = currentTime.toISOString();
+        docData.views = 0;
+        docData.whatsappClicks = 0;
       }
 
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || `Error del servidor HTTP ${res.status}`);
-      }
+      await setDoc(docRef, docData, { merge: true });
 
-      console.log("Producto guardado exitosamente en Google Cloud SQL!");
+      console.log("Producto guardado exitosamente en Firestore!");
       showToast(savedMsg);
       onRefreshProducts(); // Synchronize local state
     } catch (error: any) {
-      console.error("Could not write product to Google Cloud SQL:", error);
-      showToast(`Error al guardar producto en la base de datos de Google Cloud: ${error.message || error}`, "error");
+      console.error("Could not write product to Firestore:", error);
+      showToast(`Error al guardar producto en Firestore: ${error.message || error}`, "error");
     } finally {
       setLoading(false);
     }
@@ -631,22 +637,16 @@ export default function AdminPanel({
     } catch (e) {}
 
     try {
-      // Delete from Google Cloud SQL directly
-      const res = await fetch(`/api/products/${id}`, {
-        method: "DELETE"
-      });
+      // Delete from Firestore directly
+      const docRef = doc(db, "products", id);
+      await deleteDoc(docRef);
 
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || `Error del servidor HTTP ${res.status}`);
-      }
-
-      console.log("Producto eliminado de Google Cloud SQL!");
+      console.log("Producto eliminado de Firestore!");
       showToast("Producto eliminado del catálogo");
       onRefreshProducts(); // Synchronize local state
     } catch (error: any) {
-      console.error("Could not delete product from Google Cloud SQL:", error);
-      showToast(`Error al eliminar producto en la base de datos de Google Cloud: ${error.message || error}`, "error");
+      console.error("Could not delete product from Firestore:", error);
+      showToast(`Error al eliminar producto en Firestore: ${error.message || error}`, "error");
     } finally {
       setLoading(false);
     }
