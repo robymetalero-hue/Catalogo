@@ -15,8 +15,8 @@ interface StoreLocationSectionProps {
 export default function StoreLocationSection({ storeConfig }: StoreLocationSectionProps) {
   const [activePhotoIndex, setActivePhotoIndex] = useState(0);
 
-  const images = storeConfig.storeImages && storeConfig.storeImages.length > 0
-    ? storeConfig.storeImages
+  const images = storeConfig.storeImages && storeConfig.storeImages.filter(img => img && img.trim() !== "").length > 0
+    ? storeConfig.storeImages.filter(img => img && img.trim() !== "")
     : [];
 
   const getWhatsAppLink = () => {

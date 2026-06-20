@@ -6,7 +6,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Product } from "../types";
 import { X, Phone, Tag, Play, Film, Check, ExternalLink, Sparkles, Image as ImageIcon } from "lucide-react";
-import { motion } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
 
 interface ProductDetailsModalProps {
   product: Product;
@@ -39,9 +39,9 @@ export default function ProductDetailsModal({
     }
   }, [activeImageIndex, isPlayingVideo, product.id]);
 
-  const images = product.images && product.images.length > 0 ? product.images : [
-    "https://images.unsplash.com/photo-1544816155-12df9643f363?q=80&w=600&auto=format&fit=crop"
-  ];
+  const images = product.images && product.images.filter(img => img && img.trim() !== "").length > 0 
+    ? product.images.filter(img => img && img.trim() !== "") 
+    : ["https://images.unsplash.com/photo-1544816155-12df9643f363?q=80&w=600&auto=format&fit=crop"];
 
   // Helper to parse and embed YouTube / Vimeo or return direct video url
   const getEmbedUrl = (url?: string) => {
@@ -80,6 +80,7 @@ export default function ProductDetailsModal({
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-md overscroll-contain"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
       onClick={onClose}
     >
       {/* Modal Card wrapper */}
@@ -88,6 +89,7 @@ export default function ProductDetailsModal({
         className="relative w-full max-w-4xl max-h-[92vh] bg-white rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-slate-100/80"
         initial={{ opacity: 0, scale: 0.93, y: 32 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.93, y: 32, transition: { duration: 0.2 } }}
         transition={{ type: "spring", damping: 25, stiffness: 300, delay: 0.05 }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -119,13 +121,15 @@ export default function ProductDetailsModal({
                   </div>
                 )}
 
-                <motion.div 
-                  key={isPlayingVideo ? "video" : activeImageIndex}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ duration: 0.25 }}
-                  className="w-full h-full"
-                >
+                <AnimatePresence mode="popLayout">
+                  <motion.div 
+                    key={isPlayingVideo ? "video" : activeImageIndex}
+                    initial={{ opacity: 0, scale: 1.02 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.98 }}
+                    transition={{ duration: 0.25 }}
+                    className="w-full h-full absolute inset-0"
+                  >
                   {isPlayingVideo && product.videoUrl ? (
                     embedVideoUrl ? (
                       <iframe
@@ -160,6 +164,7 @@ export default function ProductDetailsModal({
                     />
                   )}
                 </motion.div>
+                </AnimatePresence>
 
                 {/* Return from Video to Image */}
                 {isPlayingVideo && (

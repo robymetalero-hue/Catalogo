@@ -37,11 +37,13 @@ async function startServer() {
   const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
   // Google Cloud Storage setup (automatically authenticates with service account standard context)
-  const gcsBucketName = process.env.GCS_BUCKET_NAME;
+  const gcsBucketName = process.env.GCS_BUCKET_NAME || firebaseConfig.storageBucket;
   let gcsBucket: any = null;
   if (gcsBucketName) {
     try {
-      const storage = new Storage();
+      const storage = new Storage({
+        projectId: firebaseConfig.projectId
+      });
       gcsBucket = storage.bucket(gcsBucketName);
       console.log(`[Google Cloud] Storage activo habilitado para el bucket: "${gcsBucketName}"`);
     } catch (gcsInitErr) {

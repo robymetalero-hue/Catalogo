@@ -47,7 +47,7 @@ export default function AdminPanel({
 
   // Global States
   const [activeTab, setActiveTab] = useState<"products" | "store" | "diagnostics">("products");
-  const [message, setMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
+  const [message, setMessage] = useState<{ text: string; type: "success" | "error" | "warning" } | null>(null);
   const [loading, setLoading] = useState(false);
 
   // Cloud diagnostics states
@@ -107,6 +107,7 @@ export default function AdminPanel({
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [uploadError, setUploadError] = useState("");
   const [uploadProgressMsg, setUploadProgressMsg] = useState("");
+  const [uploadPercent, setUploadPercent] = useState<number>(0);
 
   // Sync state with incoming props
   useEffect(() => {
@@ -123,7 +124,7 @@ export default function AdminPanel({
   }, [storeConfig]);
 
   // Show status toasts
-  const showToast = (text: string, type: "success" | "error" = "success") => {
+  const showToast = (text: string, type: "success" | "error" | "warning" = "success") => {
     setMessage({ text, type });
     setTimeout(() => setMessage(null), 4000);
   };
@@ -188,6 +189,15 @@ export default function AdminPanel({
     }
   };
 
+  // Utility to format sizes beautifully for saving storage feedback to the user
+  const formatBytes = (bytes: number): string => {
+    if (bytes === 0) return "0 B";
+    const k = 1024;
+    const sizes = ["B", "KB", "MB", "GB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+  };
+
   // Highly professional client-side image compression to support massive mega-pixel files
   const compressImage = (file: File): Promise<File> => {
     return new Promise<File>((resolve) => {
@@ -233,24 +243,92 @@ export default function AdminPanel({
           // Use high quality image smoothing
           ctx.imageSmoothingEnabled = true;
           ctx.imageSmoothingQuality = "high";
+
+          // Intelligently configure quality factor based on original image weight
+          // Massive DSLR / high-res smartphone pictures get compressed more to save host quotas
+          let compressionQuality = 0.83;
+          if (file.size > 8 * 1024 * 1024) {
+            compressionQuality = 0.74; // High compression for mega files
+          } else if (file.size > 3 * 1024 * 1024) {
+            compressionQuality = 0.79; // Balanced compression for big photos
+          } else if (file.size > 1 * 1024 * 1024) {
+            compressionQuality = 0.83; // Normal compression
+          } else {
+            compressionQuality = 0.86; // Light compression to keep visual crispness of smaller shots
+          }
+
+          const hasAlphaChannel = 
+            file.type === "image/png" || 
+            file.type.includes("webp") || 
+            file.name.toLowerCase().endsWith(".png") || 
+            file.name.toLowerCase().endsWith(".gif");
+
+          // WebP modern fallback routine
+          const tryWebPAndFallback = () => {
+            canvas.toBlob(
+              (webpBlob) => {
+                // If WebP export successfully compressed the image smaller than original file
+                if (webpBlob && webpBlob.size < file.size) {
+                  const cleanedName = file.name.replace(/\.[^/.]+$/, "");
+                  const compressedFile = new File([webpBlob], cleanedName + ".webp", {
+                    type: "image/webp",
+                    lastModified: Date.now(),
+                  });
+                  console.log(`[Optimización WebP] ${file.name}: ${formatBytes(file.size)} -> ${formatBytes(webpBlob.size)} (Ahorro del ${Math.round(100 - (webpBlob.size/file.size)*100)}%)`);
+                  resolve(compressedFile);
+                } else {
+                  // Fall back if webp failed or is larger (fallback to JPEG)
+                  exportJPEG();
+                }
+              },
+              "image/webp",
+              compressionQuality
+            );
+          };
+
+          const exportJPEG = () => {
+            // Fill background with neutral classic white for JPEG exports to prevent transparent elements turning solid black
+            if (hasAlphaChannel) {
+              ctx.fillStyle = "#FFFFFF";
+              ctx.fillRect(0, 0, width, height);
+            }
+            ctx.drawImage(img, 0, 0, width, height);
+
+            canvas.toBlob(
+              (jpegBlob) => {
+                if (jpegBlob) {
+                  // If JPEG actually didn't reduce content weight, retain original file to protect crisp detail
+                  if (jpegBlob.size >= file.size) {
+                    console.log(`[Optimización] Imagen ya ultra optimizada (${formatBytes(file.size)}), respetando archivo original.`);
+                    resolve(file);
+                    return;
+                  }
+
+                  const cleanedName = file.name.replace(/\.[^/.]+$/, "");
+                  const compressedFile = new File([jpegBlob], cleanedName + ".jpg", {
+                    type: "image/jpeg",
+                    lastModified: Date.now(),
+                  });
+                  console.log(`[Optimización JPEG] ${file.name}: ${formatBytes(file.size)} -> ${formatBytes(jpegBlob.size)} (Ahorro del ${Math.round(100 - (jpegBlob.size/file.size)*100)}%)`);
+                  resolve(compressedFile);
+                } else {
+                  resolve(file);
+                }
+              },
+              "image/jpeg",
+              compressionQuality
+            );
+          };
+
+          // Render the initial image onto canvas
           ctx.drawImage(img, 0, 0, width, height);
 
-          // Convert canvas to Blob (quality 0.83 is ideal visual quality / file size ratio)
-          canvas.toBlob(
-            (blob) => {
-              if (blob) {
-                const compressedFile = new File([blob], file.name, {
-                  type: "image/jpeg",
-                  lastModified: Date.now(),
-                });
-                resolve(compressedFile);
-              } else {
-                resolve(file);
-              }
-            },
-            "image/jpeg",
-            0.83
-          );
+          // Try using WebP first which is exceptionally efficient for web catalogues, handles alpha transparency beautifully, and is supported natively.
+          try {
+            tryWebPAndFallback();
+          } catch (err) {
+            exportJPEG();
+          }
         };
         img.onerror = () => {
           resolve(file);
@@ -338,6 +416,8 @@ export default function AdminPanel({
 
       setUploadProgressMsg("Procesando y optimizando imágenes para la web...");
       
+      const originalTotalSize = filesArray.reduce((acc, f) => acc + f.size, 0);
+
       // Parallel image compression (optimized for fluid experience)
       const processedFiles: File[] = await Promise.all(
         filesArray.map(async (file) => {
@@ -353,20 +433,52 @@ export default function AdminPanel({
         })
       );
 
-      const uploadedUrls: string[] = [];
+      const compressedTotalSize = processedFiles.reduce((acc, f) => acc + f.size, 0);
+      const savingsPercent = originalTotalSize > 0 
+        ? Math.round(100 - (compressedTotalSize / originalTotalSize) * 100) 
+        : 0;
 
-      // 2. Upload Loop to Backend with real percentage progress
-      let index = 1;
-      for (const file of processedFiles) {
-        setUploadProgressMsg(`Subiendo archivo ${index} de ${processedFiles.length} (0%)...`);
-        const url = await uploadWithProgress(file, (percent) => {
-          setUploadProgressMsg(`Subiendo archivo ${index} de ${processedFiles.length} (${percent}%)...`);
-        });
-        if (url) {
-          uploadedUrls.push(url);
-          console.log(`[Google Cloud] Archivo subido y registrado local/GCS: ${url}`);
-        }
-        index++;
+      const uploadedUrls: string[] = [];
+      const failedFiles: { name: string; error: string }[] = [];
+
+      // Track individual file percentage progress
+      const progressMap: { [key: string]: number } = {};
+      processedFiles.forEach((file) => {
+        progressMap[file.name] = 0;
+      });
+
+      const updateOverallProgress = (fileName: string, percent: number) => {
+        progressMap[fileName] = percent;
+        const totalPercentSum = Object.values(progressMap).reduce((sum, p) => sum + p, 0);
+        const overallAverage = Math.round(totalPercentSum / processedFiles.length);
+        setUploadPercent(overallAverage);
+      };
+
+      // 2. Concurrent Parallel Upload with individual callbacks
+      await Promise.all(
+        processedFiles.map(async (file) => {
+          try {
+            updateOverallProgress(file.name, 0);
+            setUploadProgressMsg(`Subiendo ${processedFiles.length} archivo(s)...`);
+            
+            const url = await uploadWithProgress(file, (percent) => {
+              updateOverallProgress(file.name, percent);
+              setUploadProgressMsg(`Subiendo: ${file.name} (${Math.round(percent)}%)`);
+            });
+            
+            if (url) {
+              uploadedUrls.push(url);
+              console.log(`[Google Cloud] Archivo subido y registrado local/GCS: ${url}`);
+            }
+          } catch (uploadErr: any) {
+            console.error(`Carga fallida para ${file.name}:`, uploadErr);
+            failedFiles.push({ name: file.name, error: uploadErr.message || String(uploadErr) });
+          }
+        })
+      );
+
+      if (failedFiles.length > 0 && uploadedUrls.length === 0) {
+        throw new Error(`Ninguno de los ${processedFiles.length} archivos pudo ser subido: ${failedFiles.map(f => f.name).join(", ")}`);
       }
 
       // 3. Update state fields in form
@@ -398,13 +510,22 @@ export default function AdminPanel({
         setVideoUrl(lastVideo);
       }
 
-      showToast(`¡Carga completada! Subidos ${uploadedUrls.length} archivo(s) optimizado(s) de forma segura.`);
+      // Display smart completion feedbacks
+      const totalUploaded = uploadedUrls.length;
+      if (failedFiles.length > 0) {
+        showToast(`¡Carga parcial completada! Se subieron ${totalUploaded} recurso(s) con éxito, pero falló(aron) ${failedFiles.length} archivo(s).`, "warning");
+      } else if (savingsPercent > 5) {
+        showToast(`¡Carga completada! Ahorraste ${savingsPercent}% de espacio y ancho de banda (${formatBytes(originalTotalSize)} ➔ ${formatBytes(compressedTotalSize)})`);
+      } else {
+        showToast(`¡Carga completada! Subidos ${totalUploaded} archivo(s) optimizado(s) de forma segura.`);
+      }
     } catch (err: any) {
       console.error("Carga de archivos fallida: ", err);
       setUploadError(err.message || String(err));
       showToast("Error al subir los medios", "error");
     } finally {
       setUploadingMedia(false);
+      setUploadPercent(0);
       setUploadProgressMsg("");
       e.target.value = "";
     }
@@ -431,6 +552,8 @@ export default function AdminPanel({
       }
 
       setUploadProgressMsg("Procesando fotos de la tienda...");
+      const originalTotalSize = filesArray.reduce((acc, f) => acc + f.size, 0);
+
       const processedFiles: File[] = await Promise.all(
         filesArray.map(async (file) => {
           try {
@@ -441,17 +564,51 @@ export default function AdminPanel({
         })
       );
 
+      const compressedTotalSize = processedFiles.reduce((acc, f) => acc + f.size, 0);
+      const savingsPercent = originalTotalSize > 0 
+        ? Math.round(100 - (compressedTotalSize / originalTotalSize) * 100) 
+        : 0;
+
       const uploadedUrls: string[] = [];
-      let index = 1;
-      for (const file of processedFiles) {
-        setUploadProgressMsg(`Subiendo foto ${index} de ${processedFiles.length} (0%)...`);
-        const url = await uploadWithProgress(file, (percent) => {
-          setUploadProgressMsg(`Subiendo foto ${index} de ${processedFiles.length} (${percent}%)...`);
-        });
-        if (url) {
-          uploadedUrls.push(url);
-        }
-        index++;
+      const failedFiles: { name: string; error: string }[] = [];
+
+      // Track individual file progress
+      const progressMap: { [key: string]: number } = {};
+      processedFiles.forEach((file) => {
+        progressMap[file.name] = 0;
+      });
+
+      const updateOverallProgress = (fileName: string, percent: number) => {
+        progressMap[fileName] = percent;
+        const totalPercentSum = Object.values(progressMap).reduce((sum, p) => sum + p, 0);
+        const overallAverage = Math.round(totalPercentSum / processedFiles.length);
+        setUploadPercent(overallAverage);
+      };
+
+      // Concurrent parallel execution
+      await Promise.all(
+        processedFiles.map(async (file) => {
+          try {
+            updateOverallProgress(file.name, 0);
+            setUploadProgressMsg(`Subiendo ${processedFiles.length} foto(s)...`);
+            
+            const url = await uploadWithProgress(file, (percent) => {
+              updateOverallProgress(file.name, percent);
+              setUploadProgressMsg(`Subiendo: ${file.name} (${Math.round(percent)}%)`);
+            });
+            
+            if (url) {
+              uploadedUrls.push(url);
+            }
+          } catch (uploadErr: any) {
+            console.error(`Carga de foto de sucursal fallida para ${file.name}:`, uploadErr);
+            failedFiles.push({ name: file.name, error: uploadErr.message || String(uploadErr) });
+          }
+        })
+      );
+
+      if (failedFiles.length > 0 && uploadedUrls.length === 0) {
+        throw new Error(`Ninguna de las fotos de la sucursal pudo ser subida: ${failedFiles.map(f => f.name).join(", ")}`);
       }
 
       setStoreImagesList((prev) => {
@@ -460,13 +617,20 @@ export default function AdminPanel({
         return combined.length === 0 ? [""] : combined;
       });
 
-      showToast(`¡Se cargaron exitosamente ${uploadedUrls.length} fotos de la tienda!`);
+      if (failedFiles.length > 0) {
+        showToast(`¡Carga parcial! Se subieron ${uploadedUrls.length} fotos de tienda con éxito, pero falló(aron) ${failedFiles.length}.`, "warning");
+      } else if (savingsPercent > 5) {
+        showToast(`¡Fotos cargadas! Optimización redujo almacenamiento en ${savingsPercent}% (${formatBytes(originalTotalSize)} ➔ ${formatBytes(compressedTotalSize)})`);
+      } else {
+        showToast(`¡Se cargaron exitosamente ${uploadedUrls.length} fotos de la tienda!`);
+      }
     } catch (err: any) {
       console.error(err);
       showToast(`Error al subir fotos de la tienda: ${err.message}`, "error");
     } finally {
       setUploadingMedia(false);
       setLoading(false);
+      setUploadPercent(0);
       setUploadProgressMsg("");
       e.target.value = "";
     }
@@ -738,10 +902,18 @@ export default function AdminPanel({
           className={`fixed bottom-6 right-6 z-50 flex items-center gap-2.5 px-4 py-3 rounded-xl shadow-lg border animate-slideUp ${
             message.type === "success" 
               ? "bg-slate-900 border-slate-800 text-teal-400" 
-              : "bg-rose-900 border-rose-800 text-white"
+              : message.type === "warning"
+              ? "bg-amber-950 border-amber-800 text-amber-500"
+              : "bg-rose-950 border-rose-800 text-rose-300"
           }`}
         >
-          <div className="w-1.5 h-1.5 rounded-full bg-teal-400 animate-pulse"></div>
+          <div className={`w-1.5 h-1.5 rounded-full animate-pulse ${
+            message.type === "success" 
+              ? "bg-teal-400" 
+              : message.type === "warning"
+              ? "bg-amber-500"
+              : "bg-rose-500"
+          }`}></div>
           <span className="text-sm font-medium">{message.text}</span>
           <button onClick={() => setMessage(null)} className="ml-2 hover:opacity-80">
             <X size={14} />
@@ -947,12 +1119,26 @@ export default function AdminPanel({
                   </span>
                 </div>
 
-                {uploadingMedia && (
-                  <div className="absolute inset-0 bg-white/95 rounded-2xl flex flex-col items-center justify-center z-20 p-4 text-center">
-                    <span className="w-8 h-8 rounded-full border-2 border-amber-500 border-t-transparent animate-spin inline-block mb-2" />
-                    <span className="text-[11px] font-bold text-amber-900 uppercase tracking-widest animate-pulse max-w-full truncate">
-                      {uploadProgressMsg || "Cargando Archivos..."}
+                {uploadingMedia && !uploadProgressMsg.includes("foto") && (
+                  <div className="absolute inset-0 bg-white/98 rounded-2xl flex flex-col items-center justify-center z-20 p-5 text-center">
+                    {/* circular spinner with percent */}
+                    <div className="relative flex items-center justify-center mb-3">
+                      <span className="w-14 h-14 rounded-full border-4 border-amber-100 border-t-amber-500 animate-spin inline-block" />
+                      <span className="absolute text-[11px] font-black text-amber-800">{uploadPercent}%</span>
+                    </div>
+                    
+                    {/* progress text messages */}
+                    <span className="text-[11px] font-bold text-slate-800 uppercase tracking-wide max-w-full truncate px-2 mb-2.5">
+                      {uploadProgressMsg || "Preparando Archivos..."}
                     </span>
+
+                    {/* bar container */}
+                    <div className="w-full max-w-[200px] h-2 bg-slate-100 rounded-full overflow-hidden shadow-inner border border-slate-200/50">
+                      <div 
+                        className="h-full bg-linear-to-r from-amber-500 to-amber-600 rounded-full transition-all duration-300 ease-out" 
+                        style={{ width: `${uploadPercent}%` }}
+                      />
+                    </div>
                   </div>
                 )}
               </div>
@@ -1427,7 +1613,7 @@ export default function AdminPanel({
 
             {/* Upload Zone for Store Photos */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
-              <div className="border border-dashed border-slate-300 hover:border-amber-400 bg-amber-50/5 hover:bg-amber-50/15 p-4 rounded-xl transition-all relative flex flex-col items-center justify-center text-center h-[140px]">
+              <div className="border border-dashed border-slate-300 hover:border-amber-400 bg-amber-50/5 hover:bg-amber-50/15 p-4 rounded-xl transition-all relative flex flex-col items-center justify-center text-center h-[140px] overflow-hidden">
                 <input
                   type="file"
                   multiple
@@ -1438,7 +1624,7 @@ export default function AdminPanel({
                 />
                 
                 <div className="flex flex-col items-center pointer-events-none">
-                  <Upload size={16} className={`text-amber-505 mb-1.5 ${uploadingMedia ? "animate-bounce text-amber-600" : "text-amber-500"}`} />
+                  <Upload size={16} className={`mb-1.5 ${uploadingMedia ? "animate-bounce text-amber-600" : "text-amber-500"}`} />
                   <span className="text-[11px] font-extrabold text-slate-700 uppercase tracking-wider">
                     {uploadingMedia ? "Subiendo fotos..." : "Subir Fotos de Tienda"}
                   </span>
@@ -1446,6 +1632,20 @@ export default function AdminPanel({
                     PNG, JPG o JPEG (Hasta 15MB)
                   </span>
                 </div>
+
+                {uploadingMedia && uploadProgressMsg.includes("foto") && (
+                  <div className="absolute inset-0 bg-white/98 flex flex-col items-center justify-center z-20 p-3 text-center">
+                    {/* circular spinner with percent */}
+                    <div className="relative flex items-center justify-center mb-1.5">
+                      <span className="w-10 h-10 rounded-full border-3 border-amber-100 border-t-amber-500 animate-spin inline-block" />
+                      <span className="absolute text-[9px] font-black text-amber-800">{uploadPercent}%</span>
+                    </div>
+                    {/* progress text messages */}
+                    <span className="text-[9px] font-bold text-slate-800 uppercase tracking-wide max-w-full truncate px-1">
+                      {uploadProgressMsg || "Cargando..."}
+                    </span>
+                  </div>
+                )}
               </div>
 
               {/* Grid of uploaded store images previews */}

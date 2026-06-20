@@ -738,41 +738,44 @@ export default function App() {
                 )}
 
                 {/* Ambient Shop Sneak Peek / Showroom Section at Bottom */}
-                {storeConfig.storeImages && storeConfig.storeImages.length > 0 && (
-                  <div className="mt-20 border-t border-slate-200/60 pt-10 space-y-5">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div>
-                        <h4 className="font-sans font-extrabold text-slate-900 text-sm uppercase tracking-tight">📸 Conoce Nuestra Sucursal Física</h4>
-                        <p className="text-slate-500 text-[11px] font-medium">Te invitamos a visitarnos en nuestro showroom físico para ver el inventario completo.</p>
-                      </div>
-                      <button
-                        onClick={() => {
-                          setActiveViewTab("location");
-                          window.scrollTo({ top: 0, behavior: "smooth" });
-                        }}
-                        className="text-[10px] font-bold uppercase tracking-wider text-amber-600 hover:text-amber-700 underline self-start sm:self-auto cursor-pointer"
-                      >
-                        Ver dirección completa y mapa &rarr;
-                      </button>
-                    </div>
-
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                      {storeConfig.storeImages.slice(0, 4).map((img, idx) => (
-                        <motion.div
-                          key={idx}
-                          whileHover={{ scale: 1.02 }}
+                {(() => {
+                  const verifiedStoreImages = (storeConfig.storeImages || []).filter(img => img && img.trim() !== "");
+                  return verifiedStoreImages.length > 0 && (
+                    <div className="mt-20 border-t border-slate-200/60 pt-10 space-y-5">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div>
+                          <h4 className="font-sans font-extrabold text-slate-900 text-sm uppercase tracking-tight">📸 Conoce Nuestra Sucursal Física</h4>
+                          <p className="text-slate-500 text-[11px] font-medium">Te invitamos a visitarnos en nuestro showroom físico para ver el inventario completo.</p>
+                        </div>
+                        <button
                           onClick={() => {
                             setActiveViewTab("location");
                             window.scrollTo({ top: 0, behavior: "smooth" });
                           }}
-                          className="aspect-16/10 rounded-2xl overflow-hidden border border-slate-200 cursor-pointer bg-slate-100 shadow-3xs"
+                          className="text-[10px] font-bold uppercase tracking-wider text-amber-600 hover:text-amber-700 underline self-start sm:self-auto cursor-pointer"
                         >
-                          <img src={img} alt={`Sucursal Sneak Peek ${idx + 1}`} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                        </motion.div>
-                      ))}
+                          Ver dirección completa y mapa &rarr;
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                        {verifiedStoreImages.slice(0, 4).map((img, idx) => (
+                          <motion.div
+                            key={idx}
+                            whileHover={{ scale: 1.02 }}
+                            onClick={() => {
+                              setActiveViewTab("location");
+                              window.scrollTo({ top: 0, behavior: "smooth" });
+                            }}
+                            className="aspect-16/10 rounded-2xl overflow-hidden border border-slate-200 cursor-pointer bg-slate-100 shadow-3xs"
+                          >
+                            <img src={img} alt={`Sucursal Sneak Peek ${idx + 1}`} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                          </motion.div>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
               </>
             ) : (
               <StoreLocationSection storeConfig={storeConfig} />

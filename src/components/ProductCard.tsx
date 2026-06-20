@@ -6,7 +6,7 @@
 import React, { useState } from "react";
 import { Product } from "../types";
 import { ChevronLeft, ChevronRight, Image as ImageIcon, Video, Phone, Tag } from "lucide-react";
-import { motion } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
 
 interface ProductCardProps {
   product: Product;
@@ -29,8 +29,8 @@ const ProductCard: React.FC<ProductCardProps> = ({
   const [imageLoading, setImageLoading] = useState(true);
   const imgRef = React.useRef<HTMLImageElement>(null);
 
-  const images = product.images && product.images.length > 0
-    ? product.images
+  const images = product.images && product.images.filter(img => img && img.trim() !== "").length > 0
+    ? product.images.filter(img => img && img.trim() !== "")
     : ["https://images.unsplash.com/photo-1544816155-12df9643f363?q=80&w=600&auto=format&fit=crop"]; // beautiful default product placeholder
 
   const currentImageUrl = images[currentImageIndex];
@@ -83,16 +83,23 @@ const ProductCard: React.FC<ProductCardProps> = ({
           </div>
         )}
 
-        <img
-          ref={imgRef}
-          src={images[currentImageIndex]}
-          alt={product.name}
-          referrerPolicy="no-referrer"
-          loading="lazy"
-          onLoad={() => setImageLoading(false)}
-          onError={() => setImageLoading(false)}
-          className={`w-full h-full object-cover transition-all duration-500 ease-out font-sans group-hover:scale-106 ${imageLoading ? 'opacity-0 scale-98 blur-xs' : 'opacity-100 scale-100 blur-none'}`}
-        />
+        <AnimatePresence mode="popLayout">
+          <motion.img
+            key={currentImageIndex}
+            ref={imgRef}
+            src={images[currentImageIndex]}
+            alt={product.name}
+            referrerPolicy="no-referrer"
+            loading="lazy"
+            onLoad={() => setImageLoading(false)}
+            onError={() => setImageLoading(false)}
+            initial={{ opacity: 0, scale: 0.98 }}
+            animate={{ opacity: imageLoading ? 0 : 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 1.02 }}
+            transition={{ duration: 0.35, ease: "easeOut" }}
+            className="w-full h-full object-cover group-hover:scale-106 transition-transform duration-500 ease-out absolute inset-0 font-sans"
+          />
+        </AnimatePresence>
 
         {/* Subtle hover zoom overlay for absolute premium feel */}
         <div className="absolute inset-0 bg-black/2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
