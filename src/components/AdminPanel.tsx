@@ -19,6 +19,7 @@ interface AdminPanelProps {
   setStoreConfig: React.Dispatch<React.SetStateAction<StoreConfig>>;
   onRefreshProducts: () => void;
   onRefreshConfig: () => void;
+  currentUser?: any | null;
 }
 
 const CATEGORY_PRESETS = ["Calzado", "Ropa", "Accesorios", "Hogar", "Tecnología", "Salud y Belleza", "Deportes", "Otros"];
@@ -30,6 +31,7 @@ export default function AdminPanel({
   setStoreConfig,
   onRefreshProducts,
   onRefreshConfig,
+  currentUser,
 }: AdminPanelProps) {
   // Calculated engagement metrics for User Feedback & Interest Dashboard
   const totalViews = products.reduce((acc, p) => acc + (p.views || 0), 0);
@@ -46,13 +48,141 @@ export default function AdminPanel({
     : null;
 
   // Global States
-  const [activeTab, setActiveTab] = useState<"products" | "store" | "diagnostics">("products");
+  const [activeTab, setActiveTab] = useState<"products" | "store" | "diagnostics" | "users">("products");
   const [message, setMessage] = useState<{ text: string; type: "success" | "error" | "warning" } | null>(null);
   const [loading, setLoading] = useState(false);
 
   // Cloud diagnostics states
   const [diagnostics, setDiagnostics] = useState<any>(null);
   const [loadingDiagnostics, setLoadingDiagnostics] = useState(false);
+
+  // User Management States
+  const [users, setUsers] = useState<any[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [isEditingUser, setIsEditingUser] = useState(false);
+  const [editingUserId, setEditingUserId] = useState<string | null>(null); // null = new user
+  
+  // User Form fields
+  const [userFormName, setUserFormName] = useState("");
+  const [userFormUsername, setUserFormUsername] = useState("");
+  const [userFormPassword, setUserFormPassword] = useState("");
+  const [userFormRole, setUserFormRole] = useState("Vendedor");
+
+  const fetchUsers = async () => {
+    setLoadingUsers(true);
+    try {
+      const res = await fetch("/api/users");
+      if (res.ok) {
+        const data = await res.json();
+        setUsers(data);
+      } else {
+        showToast("Error al cargar lista de usuarios del catálogo", "error");
+      }
+    } catch (err: any) {
+      showToast("Fallo al conectar con el servidor: " + err.message, "error");
+    } finally {
+      setLoadingUsers(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === "users" && currentUser?.role === "Administrador") {
+      fetchUsers();
+    }
+  }, [activeTab, currentUser]);
+
+  const handleOpenNewUserForm = () => {
+    setEditingUserId(null);
+    setUserFormName("");
+    setUserFormUsername("");
+    setUserFormPassword("");
+    setUserFormRole("Vendedor");
+    setIsEditingUser(true);
+  };
+
+  const handleOpenEditUserForm = (u: any) => {
+    setEditingUserId(u.id);
+    setUserFormName(u.name);
+    setUserFormUsername(u.username);
+    setUserFormPassword(u.password || "");
+    setUserFormRole(u.role || "Vendedor");
+    setIsEditingUser(true);
+  };
+
+  const handleSubmitUserForm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!userFormName || !userFormUsername || !userFormPassword) {
+      showToast("Por favor completa todos los campos obligatorios.", "error");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const payload = {
+        name: userFormName,
+        username: userFormUsername,
+        password: userFormPassword,
+        role: userFormRole
+      };
+
+      let res;
+      if (editingUserId) {
+        res = await fetch(`/api/users/${editingUserId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+      } else {
+        res = await fetch(`/api/users`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+      }
+
+      if (res.ok) {
+        showToast(editingUserId ? "Usuario actualizado con éxito." : "Usuario creado con éxito.", "success");
+        setIsEditingUser(false);
+        fetchUsers();
+      } else {
+        const errData = await res.json();
+        showToast(errData.error || "Error al guardar el usuario.", "error");
+      }
+    } catch (err: any) {
+      showToast("Error de conexión: " + err.message, "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteUser = async (id: string, name: string) => {
+    if (id === currentUser?.uid) {
+      showToast("No puedes eliminar tu propio usuario activo.", "error");
+      return;
+    }
+    if (!confirm(`¿Estás seguro de que deseas eliminar al usuario "${name}"?`)) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/users/${id}`, {
+        method: "DELETE"
+      });
+
+      if (res.ok) {
+        showToast("Usuario eliminado con éxito.", "success");
+        fetchUsers();
+      } else {
+        const errData = await res.json();
+        showToast(errData.error || "Fallo al eliminar usuario.", "error");
+      }
+    } catch (err: any) {
+      showToast("Error de conexión: " + err.message, "error");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const fetchDiagnostics = async () => {
     setLoadingDiagnostics(true);
@@ -342,11 +472,11 @@ export default function AdminPanel({
     });
   };
 
-  // Core Helper: Direct Upload to our Node/Express Backend which uploads to GCS or stores locally
-  const uploadWithProgress = (
-    file: File, 
+  // Core Helper: Direct Multi-file Upload to our Node/Express Backend
+  const uploadMultipleWithProgress = (
+    files: File[], 
     onProgress: (percent: number) => void
-  ): Promise<string> => {
+  ): Promise<string[]> => {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open("POST", "/api/upload");
@@ -363,15 +493,20 @@ export default function AdminPanel({
           try {
             const data = JSON.parse(xhr.responseText);
             if (data.urls && data.urls.length > 0) {
-              resolve(data.urls[0]);
+              resolve(data.urls);
             } else {
-              reject(new Error("No se devolvió la URL del archivo desde el servidor de Google Cloud."));
+              reject(new Error("No se devolvió la lista de URLs del archivo desde el servidor de Google Cloud."));
             }
           } catch (e) {
             reject(new Error("Respuesta inválida del servidor."));
           }
         } else {
-          reject(new Error(`Error del servidor: Código de estado HTTP ${xhr.status}`));
+          try {
+            const data = JSON.parse(xhr.responseText);
+            reject(new Error(data.error || `Error del servidor: Código ${xhr.status}`));
+          } catch (e) {
+            reject(new Error(`Error del servidor: Código de estado HTTP ${xhr.status}`));
+          }
         }
       };
 
@@ -379,7 +514,9 @@ export default function AdminPanel({
       xhr.ontimeout = () => reject(new Error("Tiempo de espera agotado en la red."));
 
       const formData = new FormData();
-      formData.append("files", file);
+      files.forEach((file) => {
+        formData.append("files", file);
+      });
       xhr.send(formData);
     });
   };
@@ -438,48 +575,13 @@ export default function AdminPanel({
         ? Math.round(100 - (compressedTotalSize / originalTotalSize) * 100) 
         : 0;
 
-      const uploadedUrls: string[] = [];
-      const failedFiles: { name: string; error: string }[] = [];
+      setUploadProgressMsg(`Subiendo ${processedFiles.length} archivo(s)...`);
+      setUploadPercent(0);
 
-      // Track individual file percentage progress
-      const progressMap: { [key: string]: number } = {};
-      processedFiles.forEach((file) => {
-        progressMap[file.name] = 0;
+      const uploadedUrls = await uploadMultipleWithProgress(processedFiles, (percent) => {
+        setUploadPercent(percent);
+        setUploadProgressMsg(`Subiendo archivos... (${percent}%)`);
       });
-
-      const updateOverallProgress = (fileName: string, percent: number) => {
-        progressMap[fileName] = percent;
-        const totalPercentSum = Object.values(progressMap).reduce((sum, p) => sum + p, 0);
-        const overallAverage = Math.round(totalPercentSum / processedFiles.length);
-        setUploadPercent(overallAverage);
-      };
-
-      // 2. Concurrent Parallel Upload with individual callbacks
-      await Promise.all(
-        processedFiles.map(async (file) => {
-          try {
-            updateOverallProgress(file.name, 0);
-            setUploadProgressMsg(`Subiendo ${processedFiles.length} archivo(s)...`);
-            
-            const url = await uploadWithProgress(file, (percent) => {
-              updateOverallProgress(file.name, percent);
-              setUploadProgressMsg(`Subiendo: ${file.name} (${Math.round(percent)}%)`);
-            });
-            
-            if (url) {
-              uploadedUrls.push(url);
-              console.log(`[Google Cloud] Archivo subido y registrado local/GCS: ${url}`);
-            }
-          } catch (uploadErr: any) {
-            console.error(`Carga fallida para ${file.name}:`, uploadErr);
-            failedFiles.push({ name: file.name, error: uploadErr.message || String(uploadErr) });
-          }
-        })
-      );
-
-      if (failedFiles.length > 0 && uploadedUrls.length === 0) {
-        throw new Error(`Ninguno de los ${processedFiles.length} archivos pudo ser subido: ${failedFiles.map(f => f.name).join(", ")}`);
-      }
 
       // 3. Update state fields in form
       const newImages: string[] = [];
@@ -512,17 +614,15 @@ export default function AdminPanel({
 
       // Display smart completion feedbacks
       const totalUploaded = uploadedUrls.length;
-      if (failedFiles.length > 0) {
-        showToast(`¡Carga parcial completada! Se subieron ${totalUploaded} recurso(s) con éxito, pero falló(aron) ${failedFiles.length} archivo(s).`, "warning");
-      } else if (savingsPercent > 5) {
-        showToast(`¡Carga completada! Ahorraste ${savingsPercent}% de espacio y ancho de banda (${formatBytes(originalTotalSize)} ➔ ${formatBytes(compressedTotalSize)})`);
+      if (savingsPercent > 5) {
+        showToast(`¡Carga completada! Ahorraste ${savingsPercent}% de espacio (${formatBytes(originalTotalSize)} ➔ ${formatBytes(compressedTotalSize)})`);
       } else {
         showToast(`¡Carga completada! Subidos ${totalUploaded} archivo(s) optimizado(s) de forma segura.`);
       }
     } catch (err: any) {
       console.error("Carga de archivos fallida: ", err);
       setUploadError(err.message || String(err));
-      showToast("Error al subir los medios", "error");
+      showToast("Error al subir los medios: " + (err.message || "Error desconocido"), "error");
     } finally {
       setUploadingMedia(false);
       setUploadPercent(0);
@@ -569,47 +669,13 @@ export default function AdminPanel({
         ? Math.round(100 - (compressedTotalSize / originalTotalSize) * 100) 
         : 0;
 
-      const uploadedUrls: string[] = [];
-      const failedFiles: { name: string; error: string }[] = [];
+      setUploadProgressMsg(`Subiendo ${processedFiles.length} foto(s)...`);
+      setUploadPercent(0);
 
-      // Track individual file progress
-      const progressMap: { [key: string]: number } = {};
-      processedFiles.forEach((file) => {
-        progressMap[file.name] = 0;
+      const uploadedUrls = await uploadMultipleWithProgress(processedFiles, (percent) => {
+        setUploadPercent(percent);
+        setUploadProgressMsg(`Subiendo fotos de sucursal... (${percent}%)`);
       });
-
-      const updateOverallProgress = (fileName: string, percent: number) => {
-        progressMap[fileName] = percent;
-        const totalPercentSum = Object.values(progressMap).reduce((sum, p) => sum + p, 0);
-        const overallAverage = Math.round(totalPercentSum / processedFiles.length);
-        setUploadPercent(overallAverage);
-      };
-
-      // Concurrent parallel execution
-      await Promise.all(
-        processedFiles.map(async (file) => {
-          try {
-            updateOverallProgress(file.name, 0);
-            setUploadProgressMsg(`Subiendo ${processedFiles.length} foto(s)...`);
-            
-            const url = await uploadWithProgress(file, (percent) => {
-              updateOverallProgress(file.name, percent);
-              setUploadProgressMsg(`Subiendo: ${file.name} (${Math.round(percent)}%)`);
-            });
-            
-            if (url) {
-              uploadedUrls.push(url);
-            }
-          } catch (uploadErr: any) {
-            console.error(`Carga de foto de sucursal fallida para ${file.name}:`, uploadErr);
-            failedFiles.push({ name: file.name, error: uploadErr.message || String(uploadErr) });
-          }
-        })
-      );
-
-      if (failedFiles.length > 0 && uploadedUrls.length === 0) {
-        throw new Error(`Ninguna de las fotos de la sucursal pudo ser subida: ${failedFiles.map(f => f.name).join(", ")}`);
-      }
 
       setStoreImagesList((prev) => {
         const cleaned = prev.filter((img) => img.trim() !== "");
@@ -617,9 +683,7 @@ export default function AdminPanel({
         return combined.length === 0 ? [""] : combined;
       });
 
-      if (failedFiles.length > 0) {
-        showToast(`¡Carga parcial! Se subieron ${uploadedUrls.length} fotos de tienda con éxito, pero falló(aron) ${failedFiles.length}.`, "warning");
-      } else if (savingsPercent > 5) {
+      if (savingsPercent > 5) {
         showToast(`¡Fotos cargadas! Optimización redujo almacenamiento en ${savingsPercent}% (${formatBytes(originalTotalSize)} ➔ ${formatBytes(compressedTotalSize)})`);
       } else {
         showToast(`¡Se cargaron exitosamente ${uploadedUrls.length} fotos de la tienda!`);
@@ -932,9 +996,9 @@ export default function AdminPanel({
         </div>
 
         {/* Tab Selector */}
-        <div className="flex gap-2 bg-slate-100 p-1 rounded-xl self-start">
+        <div className="flex flex-wrap gap-2 bg-slate-100 p-1 rounded-xl self-start">
           <button
-            onClick={() => { setActiveTab("products"); setIsEditingProduct(false); }}
+            onClick={() => { setActiveTab("products"); setIsEditingProduct(false); setIsEditingUser(false); }}
             className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all ${
               activeTab === "products"
                 ? "bg-white text-slate-900 shadow-sm"
@@ -944,7 +1008,7 @@ export default function AdminPanel({
             Productos
           </button>
           <button
-            onClick={() => { setActiveTab("store"); setIsEditingProduct(false); }}
+            onClick={() => { setActiveTab("store"); setIsEditingProduct(false); setIsEditingUser(false); }}
             className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all ${
               activeTab === "store"
                 ? "bg-white text-slate-900 shadow-sm"
@@ -953,17 +1017,34 @@ export default function AdminPanel({
           >
             Ajustes de Tienda
           </button>
-          <button
-            onClick={() => { setActiveTab("diagnostics"); setIsEditingProduct(false); }}
-            className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center gap-1 ${
-              activeTab === "diagnostics"
-                ? "bg-white text-slate-900 shadow-sm"
-                : "text-slate-500 hover:text-slate-900"
-            }`}
-          >
-            <Database size={12} className={activeTab === "diagnostics" ? "text-amber-500" : "text-slate-400"} />
-            <span>Estado de la Nube</span>
-          </button>
+
+          {currentUser?.role === "Administrador" && (
+            <>
+              <button
+                onClick={() => { setActiveTab("diagnostics"); setIsEditingProduct(false); setIsEditingUser(false); }}
+                className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center gap-1 ${
+                  activeTab === "diagnostics"
+                    ? "bg-white text-slate-900 shadow-sm"
+                    : "text-slate-500 hover:text-slate-900"
+                }`}
+              >
+                <Database size={12} className={activeTab === "diagnostics" ? "text-amber-500" : "text-slate-400"} />
+                <span>Estado de la Nube</span>
+              </button>
+
+              <button
+                onClick={() => { setActiveTab("users"); setIsEditingProduct(false); setIsEditingUser(false); }}
+                className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center gap-1 ${
+                  activeTab === "users"
+                    ? "bg-white text-slate-900 shadow-sm"
+                    : "text-slate-500 hover:text-slate-900"
+                }`}
+              >
+                <Shield size={12} className={activeTab === "users" ? "text-amber-500" : "text-slate-400"} />
+                <span>Usuarios y Roles</span>
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -1723,7 +1804,7 @@ export default function AdminPanel({
             </button>
           </div>
         </form>
-      ) : (
+      ) : activeTab === "diagnostics" ? (
         /* CLOUD DIAGNOSTICS DETAILED TAB PANEL */
         <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xs animate-fadeIn space-y-6 text-left">
           <div className="border-b border-slate-100 pb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -1883,7 +1964,185 @@ export default function AdminPanel({
             </div>
           )}
         </div>
-      )}
+      ) : activeTab === "users" ? (
+        /* USER MANAGEMENT DETAILED TAB PANEL */
+        <div className="space-y-6 text-left">
+          {isEditingUser ? (
+            /* USER EDIT/CREATE VIEW */
+            <form onSubmit={handleSubmitUserForm} className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xs animate-fadeIn space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-2">
+                <div>
+                  <h3 className="font-sans font-semibold text-lg text-slate-800">
+                    {editingUserId ? "Editar Colaborador" : "Crear Nuevo Colaborador"}
+                  </h3>
+                  <p className="text-xs text-slate-400">Define los accesos y privilegios del colaborador del catálogo.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsEditingUser(false)}
+                  className="p-1.5 border border-slate-200 hover:bg-slate-50 text-slate-400 hover:text-slate-650 rounded-lg text-xs"
+                >
+                  Cancelar
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Nombre Completo *</label>
+                  <input
+                    type="text"
+                    value={userFormName}
+                    onChange={(e) => setUserFormName(e.target.value)}
+                    className="w-full px-3.5 py-2 border border-slate-200 rounded-lg text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-500/20 text-slate-800"
+                    placeholder="Ej. Ana Vendedora"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Nombre de Usuario o Correo *</label>
+                  <input
+                    type="text"
+                    value={userFormUsername}
+                    onChange={(e) => setUserFormUsername(e.target.value)}
+                    className="w-full px-3.5 py-2 border border-slate-200 rounded-lg text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-500/20 text-slate-800"
+                    placeholder="Ej. ana12 o ana@tienda.com"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Contraseña de Acceso *</label>
+                  <input
+                    type="text"
+                    value={userFormPassword}
+                    onChange={(e) => setUserFormPassword(e.target.value)}
+                    className="w-full px-3.5 py-2 border border-slate-200 rounded-lg text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-500/20 font-mono text-slate-800"
+                    placeholder="Introduce la contraseña"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Rol Asignado *</label>
+                  <select
+                    value={userFormRole}
+                    onChange={(e) => setUserFormRole(e.target.value)}
+                    className="w-full px-3.5 py-2 border border-slate-200 rounded-lg text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-500/20 text-slate-800 bg-white"
+                  >
+                    <option value="Vendedor">Vendedor (Sube productos y modifica catálogo, sin gestión de usuarios)</option>
+                    <option value="Administrador">Administrador (Control total y gestión de usuarios)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex justify-end pt-4 border-t border-slate-100 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsEditingUser(false)}
+                  className="px-4 py-2 border border-slate-250 bg-white hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-semibold transition-all"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5"
+                >
+                  <Save size={13} />
+                  <span>{loading ? "Guardando..." : "Guardar Colaborador"}</span>
+                </button>
+              </div>
+            </form>
+          ) : (
+            /* USERS MASTER TABLE VIEW */
+            <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xs animate-fadeIn space-y-4">
+              <div className="flex justify-between items-center border-b border-slate-100 pb-4">
+                <div>
+                  <h3 className="font-sans font-semibold text-lg text-slate-800">Cuentas de Usuarios y Colaboradores</h3>
+                  <p className="text-xs text-slate-400">Asigna roles o cambia contraseñas de las personas autorizadas para utilizar el panel.</p>
+                </div>
+                <button
+                  onClick={handleOpenNewUserForm}
+                  className="px-4 py-2 bg-amber-500 hover:bg-amber-600 shadow-sm shadow-amber-500/10 text-white font-semibold rounded-lg text-xs flex items-center gap-1.5 cursor-pointer transition-all"
+                >
+                  <Plus size={14} />
+                  <span>Nuevo Usuario</span>
+                </button>
+              </div>
+
+              {loadingUsers ? (
+                <div className="py-12 flex flex-col items-center justify-center gap-3">
+                  <RefreshCw size={24} className="animate-spin text-amber-500" />
+                  <p className="text-xs text-slate-500">Cargando usuarios autorizados...</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-150 bg-slate-50/70">
+                        <th className="p-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Nombre</th>
+                        <th className="p-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Usuario / Email</th>
+                        <th className="p-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Rol de Acceso</th>
+                        <th className="p-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Contraseña</th>
+                        <th className="p-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider text-right">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {users.map((u) => (
+                        <tr key={u.id} className="hover:bg-slate-50/50 transition-colors">
+                          <td className="p-3 text-xs font-semibold text-slate-800">{u.name}</td>
+                          <td className="p-3 text-xs font-mono text-slate-500">{u.username}</td>
+                          <td className="p-3 text-xs">
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase ${
+                              u.role === "Administrador" 
+                                ? "bg-amber-100 text-amber-800" 
+                                : "bg-blue-100 text-blue-800"
+                            }`}>
+                              {u.role || "Vendedor"}
+                            </span>
+                          </td>
+                          <td className="p-3 text-xs font-mono text-slate-500 select-all">{u.password}</td>
+                          <td className="p-3 text-xs text-right space-x-1">
+                            <button
+                              onClick={() => handleOpenEditUserForm(u)}
+                              className="p-1.5 text-slate-500 hover:text-slate-800 border border-slate-200 bg-white hover:bg-slate-50 rounded-lg inline-flex items-center gap-1 transition-colors"
+                              title="Editar Usuario"
+                            >
+                              <Edit2 size={12} />
+                              <span className="text-[10px] font-medium hidden sm:inline">Editar</span>
+                            </button>
+                            <button
+                              onClick={() => handleDeleteUser(u.id, u.name)}
+                              disabled={u.id === currentUser?.uid}
+                              className={`p-1.5 border hover:bg-rose-50 rounded-lg inline-flex items-center gap-1 transition-colors ${
+                                u.id === currentUser?.uid 
+                                  ? "text-slate-300 border-slate-100 cursor-not-allowed" 
+                                  : "text-rose-500 hover:text-rose-700 border-rose-150"
+                              }`}
+                              title={u.id === currentUser?.uid ? "No puedes eliminarte a ti mismo" : "Eliminar Usuario"}
+                            >
+                              <Trash2 size={12} />
+                              <span className="text-[10px] font-medium hidden sm:inline">Eliminar</span>
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                      {users.length === 0 && (
+                        <tr>
+                          <td colSpan={5} className="p-8 text-center text-xs text-slate-400">
+                            No se encontraron colaboradores registrados en Firestore.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }

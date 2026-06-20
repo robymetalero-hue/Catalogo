@@ -85,7 +85,7 @@ export default function App() {
       const saved = localStorage.getItem("admin_session");
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed && typeof parsed === "object" && parsed.email === "robymetalero@gmail.com") {
+        if (parsed && typeof parsed === "object" && parsed.uid) {
           return parsed as AdminUser;
         }
       }
@@ -99,7 +99,7 @@ export default function App() {
       const saved = localStorage.getItem("admin_session");
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed && typeof parsed === "object" && parsed.email === "robymetalero@gmail.com") {
+        if (parsed && typeof parsed === "object" && parsed.uid) {
           return true;
         }
       }
@@ -112,7 +112,7 @@ export default function App() {
 
   // Modal Login form states
   const [showLoginModal, setShowLoginModal] = useState(false);
-  const [loginEmail, setLoginEmail] = useState("robymetalero@gmail.com");
+  const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [localLoginError, setLocalLoginError] = useState<string | null>(null);
 
@@ -255,55 +255,18 @@ export default function App() {
 
   // Sync user logging state
   useEffect(() => {
-    const unsubAuth = onAuthStateChanged(auth, (firebaseUser) => {
-      if (firebaseUser) {
-        // Enforce hardcoded admin robymetalero@gmail.com constraint or fallback checks
-        const isAdminUser = firebaseUser.email === "robymetalero@gmail.com";
-        const loggedUser: AdminUser = {
-          uid: firebaseUser.uid,
-          email: firebaseUser.email,
-          displayName: firebaseUser.displayName,
-          photoURL: firebaseUser.photoURL,
-          isAdmin: isAdminUser
-        };
-
-        if (isAdminUser) {
-          setUser(loggedUser);
-          localStorage.setItem("admin_session", JSON.stringify(loggedUser));
+    try {
+      const saved = localStorage.getItem("admin_session");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === "object" && parsed.uid) {
+          setUser(parsed);
           setShowAdminPanel(true);
         }
-      } else {
-        // Only clear user state if we don't have a local admin override session
-        const saved = localStorage.getItem("admin_session");
-        if (saved) {
-          try {
-            const parsed = JSON.parse(saved);
-            if (parsed && parsed.email === "robymetalero@gmail.com") {
-              // Automatically re-authenticate in the background using the standardized admin password.
-              // This guarantees that their Firebase Auth session matches their visual Admin state, eliminating "Missing or insufficient permissions"!
-              signInWithEmailAndPassword(auth, "robymetalero@gmail.com", "robyadmin2026")
-                .then(() => {
-                  console.log("Silent background re-authentication succeeded!");
-                })
-                .catch((authError) => {
-                  console.warn("Silent background authentication failed (non-blocking):", authError);
-                });
-            } else {
-              setUser(null);
-              setShowAdminPanel(false);
-            }
-          } catch (e) {
-            setUser(null);
-            setShowAdminPanel(false);
-          }
-        } else {
-          setUser(null);
-          setShowAdminPanel(false);
-        }
       }
-    });
-
-    return () => unsubAuth();
+    } catch (e) {
+      console.warn("Error cargando sesión persistente:", e);
+    }
   }, []);
 
   // Helper: Static loading if listener fails due to offline/permission
@@ -396,46 +359,29 @@ export default function App() {
     const cleanEmail = loginEmail.trim().toLowerCase();
     const cleanPassword = loginPassword.trim();
 
-    if (cleanEmail !== "robymetalero@gmail.com") {
-      setLocalLoginError("El correo ingresado no está registrado como Administrador.");
-      return;
-    }
-
-    // Accept multiple variations of the secure passwords to ensure user success
-    const acceptedPasswords = ["admin123", "roby123", "robyadmin2026"];
-    if (!acceptedPasswords.includes(cleanPassword)) {
-      setLocalLoginError("Contraseña incorrecta. Introduce una contraseña válida.");
+    if (!cleanEmail || !cleanPassword) {
+      setLocalLoginError("Por favor ingresa usuario y contraseña.");
       return;
     }
 
     setLoadingApp(true);
     try {
-      // Use "robyadmin2026" as a standardized strong password for Firebase auth backend representation
-      const firebasePassword = "robyadmin2026";
-      let firebaseUser = null;
-      try {
-        const result = await signInWithEmailAndPassword(auth, cleanEmail, firebasePassword);
-        firebaseUser = result.user;
-      } catch (signInErr: any) {
-        if (signInErr.code === "auth/user-not-found" || signInErr.code === "auth/invalid-login-credentials" || signInErr.code === "auth/invalid-credential" || signInErr.code === "auth/cannot-find-user") {
-          try {
-            const result = await createUserWithEmailAndPassword(auth, cleanEmail, firebasePassword);
-            firebaseUser = result.user;
-          } catch (createErr: any) {
-            console.warn("Could not auto-register user on Firebase Auth:", createErr);
-          }
-        } else {
-          console.warn("Firebase Auth signIn error:", signInErr);
-        }
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ username: cleanEmail, password: cleanPassword })
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        setLocalLoginError(errData.error || "Usuario o contraseña incorrectos.");
+        setLoadingApp(false);
+        return;
       }
 
-      const loggedUser: AdminUser = {
-        uid: firebaseUser?.uid || "local-admin-uid-roby",
-        email: "robymetalero@gmail.com",
-        displayName: "Administrador Roby",
-        photoURL: null,
-        isAdmin: true
-      };
+      const loggedUser: AdminUser = await response.json();
 
       setUser(loggedUser);
       localStorage.setItem("admin_session", JSON.stringify(loggedUser));
@@ -443,15 +389,11 @@ export default function App() {
       setShowLoginModal(false);
       setLoginPassword("");
       
-      if (firebaseUser) {
-        setShareToast("¡Sesión iniciada con éxito y sincronizada con el servidor!");
-      } else {
-        setShareToast("¡Sesión iniciada localmente! (Servicio de autenticación no disponible).");
-      }
+      setShareToast(`¡Sesión iniciada con éxito! Bienvenido, ${loggedUser.displayName}.`);
       setTimeout(() => setShareToast(null), 4000);
     } catch (err: any) {
       console.error("General login process error:", err);
-      setLocalLoginError("Fallo al iniciar sesión en la base de datos: " + err.message);
+      setLocalLoginError("Fallo al iniciar sesión en el servidor: " + err.message);
     } finally {
       setLoadingApp(false);
     }
@@ -596,6 +538,7 @@ export default function App() {
             setStoreConfig={setStoreConfig}
             onRefreshProducts={refreshAll}
             onRefreshConfig={refreshAll}
+            currentUser={user}
           />
         </div>
       ) : (
@@ -821,14 +764,16 @@ export default function App() {
       {/* ADMIN SECURE LOGIN MODAL */}
       <AnimatePresence>
         {showLoginModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            {/* Backdrop */}
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/40 backdrop-blur-xs"
+          >
+            {/* Backdrop click dismiss handler card */}
+            <div
               onClick={() => setShowLoginModal(false)}
-              className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm"
+              className="absolute inset-0"
             />
 
             {/* Modal Body */}
@@ -836,6 +781,7 @@ export default function App() {
               initial={{ scale: 0.95, opacity: 0, y: 15 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.95, opacity: 0, y: 15 }}
+              transition={{ duration: 0.25, ease: "easeOut" }}
               className="relative bg-white w-full max-w-md rounded-3xl shadow-2xl border border-slate-100 overflow-hidden z-10"
             >
               {/* Header */}
@@ -874,43 +820,34 @@ export default function App() {
                   )}
 
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Correo Registrado</label>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Usuario o Correo</label>
                     <input
-                      type="email"
+                      type="text"
                       value={loginEmail}
                       onChange={(e) => setLoginEmail(e.target.value)}
-                      placeholder="robymetalero@gmail.com"
+                      placeholder="Ej. admin o tu correo"
                       className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-500/25 focus:border-amber-500 font-medium text-slate-800"
                       required
                     />
                   </div>
 
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Contraseña de Administrador</label>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Contraseña</label>
                     <input
                       type="password"
                       value={loginPassword}
                       onChange={(e) => setLoginPassword(e.target.value)}
-                      placeholder="Introduce tu clave administrativa"
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-500/25 focus:border-amber-500 font-medium"
+                      placeholder="Introduce tu contraseña"
+                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-500/25 focus:border-amber-500 font-medium text-slate-805"
                       required
                     />
-                  </div>
-
-                  {/* Highlighted Helper Box so he explicitly knows what credential to type */}
-                  <div className="bg-amber-50/70 border border-amber-150 rounded-2xl p-3.5 text-xs text-amber-900 space-y-1">
-                    <span className="font-extrabold uppercase tracking-wide text-[10px] text-amber-800 block">🔑 Sus Credenciales Oficiales:</span>
-                    <div className="font-medium space-y-0.5">
-                      <p>• <strong>Usuario:</strong> <span className="font-mono">robymetalero@gmail.com</span></p>
-                      <p>• <strong>Contraseña:</strong> <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-amber-200">admin123</span> o <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-amber-200">roby123</span></p>
-                    </div>
                   </div>
 
                   <button
                     type="submit"
                     className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl text-xs uppercase tracking-wider transition-all hover:shadow-lg hover:shadow-amber-500/20 active:scale-98 cursor-pointer"
                   >
-                    Ingresar con Contraseña
+                    Ingresar al Sistema
                   </button>
                 </form>
 
@@ -955,7 +892,7 @@ export default function App() {
 
               </div>
             </motion.div>
-          </div>
+          </motion.div>
         )}
       </AnimatePresence>
 

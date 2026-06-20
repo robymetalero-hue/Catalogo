@@ -38,4 +38,5 @@ export interface AdminUser {
   displayName: string | null;
   photoURL: string | null;
   isAdmin: boolean;
+  role?: string;
 }

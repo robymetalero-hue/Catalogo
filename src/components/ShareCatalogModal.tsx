@@ -68,14 +68,16 @@ export default function ShareCatalogModal({ isOpen, onClose, storeName }: ShareC
   return (
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <motion.div 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/20 backdrop-blur-xs"
+        >
           {/* Backdrop mask */}
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+          <div
             onClick={onClose}
-            className="absolute inset-0 bg-slate-900/60 backdrop-blur-xs"
+            className="absolute inset-0"
           />
 
           {/* Modal Container */}
@@ -175,7 +177,7 @@ export default function ShareCatalogModal({ isOpen, onClose, storeName }: ShareC
               Sugerencia: puedes colocar este QR en volantes, vitrinas o mostradores de pago.
             </div>
           </motion.div>
-        </div>
+        </motion.div>
       )}
     </AnimatePresence>
   );

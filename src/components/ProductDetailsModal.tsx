@@ -113,30 +113,21 @@ export default function ProductDetailsModal({
               
               {/* Main Media Stage */}
               <div className="relative aspect-square rounded-2xl bg-slate-100 border border-slate-100 overflow-hidden shadow-3xs flex items-center justify-center">
-                {/* Immersive Shimmer Skeleton Loader */}
-                {imageLoading && (
-                  <div className="absolute inset-0 bg-slate-200/90 flex flex-col items-center justify-center gap-2 z-10 transition-opacity duration-300">
-                    <ImageIcon size={28} className="text-slate-400 animate-pulse" />
-                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest leading-none">Cargando recurso...</span>
-                  </div>
-                )}
-
-                <AnimatePresence mode="popLayout">
+                <AnimatePresence mode="popLayout" initial={false}>
                   <motion.div 
                     key={isPlayingVideo ? "video" : activeImageIndex}
-                    initial={{ opacity: 0, scale: 1.02 }}
+                    initial={{ opacity: 0, scale: 0.96 }}
                     animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.98 }}
-                    transition={{ duration: 0.25 }}
-                    className="w-full h-full absolute inset-0"
+                    exit={{ opacity: 0, scale: 1.04 }}
+                    transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+                    className="w-full h-full absolute inset-0 flex items-center justify-center bg-slate-50/20"
                   >
                   {isPlayingVideo && product.videoUrl ? (
                     embedVideoUrl ? (
                       <iframe
                         src={embedVideoUrl}
                         title="Product Video"
-                        onLoad={() => setImageLoading(false)}
-                        className={`w-full h-full transition-opacity duration-300 ${imageLoading ? "opacity-0" : "opacity-100"}`}
+                        className="w-full h-full"
                         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                         allowFullScreen
                       ></iframe>
@@ -147,20 +138,15 @@ export default function ProductDetailsModal({
                         autoPlay
                         preload="metadata"
                         playsInline
-                        onLoadedData={() => setImageLoading(false)}
-                        className={`w-full h-full object-contain transition-opacity duration-300 ${imageLoading ? "opacity-0" : "opacity-100"}`}
+                        className="w-full h-full object-contain"
                       />
                     )
                   ) : (
                     <img
-                      ref={imgRef}
                       src={images[activeImageIndex]}
                       alt={product.name}
                       referrerPolicy="no-referrer"
-                      loading="lazy"
-                      onLoad={() => setImageLoading(false)}
-                      onError={() => setImageLoading(false)}
-                      className={`w-full h-full object-cover transition-all duration-300 ease-out ${imageLoading ? "opacity-0 blur-xs" : "opacity-100 blur-none"}`}
+                      className="w-full h-full object-contain p-2"
                     />
                   )}
                 </motion.div>

@@ -102,6 +102,40 @@
         }
       },
       "required": ["name", "sku"]
+    },
+    "User": {
+      "title": "Usuario del Sistema",
+      "description": "Usuario administrativo con credenciales de acceso y roles definidos",
+      "type": "object",
+      "properties": {
+        "username": {
+          "type": "string",
+          "description": "Nombre de usuario o dirección de correo electrónico"
+        },
+        "password": {
+          "type": "string",
+          "description": "Contraseña de acceso seguro"
+        },
+        "name": {
+          "type": "string",
+          "description": "Nombre completo del usuario"
+        },
+        "role": {
+          "type": "string",
+          "description": "Rol asignado (Administrador, Vendedor)"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Fecha de registro"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Fecha de actualización"
+        }
+      },
+      "required": ["username", "password", "name", "role"]
     }
   },
   "firestore": {
@@ -112,6 +146,10 @@
     "/products/{productId}": {
       "schema": "Product",
       "description": "Colección de productos expuestos en el catálogo virtual"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Lista de usuarios y colaboradores autorizados"
     }
   }
 }

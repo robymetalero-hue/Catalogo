@@ -32,9 +32,47 @@ try {
   firestoreDb = getFirestore();
 }
 
+// Sembrar usuarios administradores iniciales en Firestore si la colección está vacía
+async function seedDefaultUsers() {
+  try {
+    const usersCol = firestoreDb.collection("users");
+    const snapshot = await usersCol.limit(1).get();
+    if (snapshot.empty) {
+      console.log("[Firebase] Colección 'users' vacía. Creando usuarios administradores iniciales...");
+      
+      const adminUser = {
+        username: "admin",
+        password: "1234",
+        name: "Administrador General",
+        role: "Administrador",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      
+      const robyUser = {
+        username: "robymetalero@gmail.com",
+        password: "1234",
+        name: "Ing. Roby",
+        role: "Administrador",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      
+      await usersCol.doc("usr_admin").set(adminUser);
+      await usersCol.doc("usr_roby").set(robyUser);
+      console.log("[Firebase] Usuarios por defecto creados con éxito: admin y robymetalero@gmail.com con contraseña 1234");
+    }
+  } catch (err: any) {
+    console.error("[Firebase] Error al sembrar usuarios iniciales:", err.message || err);
+  }
+}
+
 async function startServer() {
   const app = express();
   const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+
+  // Sembrar usuarios en segundo plano
+  seedDefaultUsers();
 
   // Google Cloud Storage setup (automatically authenticates with service account standard context)
   const gcsBucketName = process.env.GCS_BUCKET_NAME || firebaseConfig.storageBucket;
@@ -219,6 +257,188 @@ async function startServer() {
     } catch (error) {
       console.error("Upload handler error:", error);
       return res.status(500).json({ error: "Error interno al procesar los archivos de catálogo." });
+    }
+  });
+
+  // --- ENDPOINTS DE AUTENTICACIÓN Y GESTIÓN DE USUARIOS SEGUROS ---
+
+  // Login de Usuario con base de datos en Firestore (Soporta admin y otros roles)
+  app.post("/api/auth/login", async (req, res) => {
+    try {
+      const { username, password } = req.body;
+      if (!username || !password) {
+        return res.status(400).json({ error: "Por favor proporciona usuario y contraseña." });
+      }
+
+      const cleanUser = username.trim().toLowerCase();
+      const cleanPass = password.trim();
+
+      // Buscar usuario en Firestore
+      const usersCol = firestoreDb.collection("users");
+      const querySnapshot = await usersCol.where("username", "==", cleanUser).get();
+
+      if (querySnapshot.empty) {
+        return res.status(401).json({ error: "El usuario ingresado no existe en el sistema." });
+      }
+
+      const userDoc = querySnapshot.docs[0];
+      const userData = userDoc.data();
+
+      if (userData.password !== cleanPass) {
+        return res.status(401).json({ error: "Contraseña incorrecta." });
+      }
+
+      const userResponse = {
+        uid: userDoc.id,
+        email: userData.username,
+        displayName: userData.name,
+        photoURL: null,
+        role: userData.role || "Vendedor",
+        isAdmin: (userData.role === "Administrador"),
+      };
+
+      console.log(`[Auth Backend] Sesión iniciada para el usuario "${cleanUser}" con rol [${userData.role}].`);
+      return res.json(userResponse);
+    } catch (error: any) {
+      console.error("Error en login backend:", error);
+      return res.status(500).json({ error: "Error interno del servidor al autenticar: " + (error.message || error) });
+    }
+  });
+
+  // Obtener lista de usuarios (solo para administración)
+  app.get("/api/users", async (req, res) => {
+    try {
+      const snapshot = await firestoreDb.collection("users").get();
+      const usersList = snapshot.docs.map(doc => {
+        const d = doc.data();
+        return {
+          id: doc.id,
+          username: d.username,
+          name: d.name,
+          role: d.role || "Vendedor",
+          password: d.password,
+          createdAt: d.createdAt,
+          updatedAt: d.updatedAt
+        };
+      });
+      return res.json(usersList);
+    } catch (error: any) {
+      console.error("Error obteniendo usuarios de Firestore:", error);
+      return res.status(500).json({ error: "Error de Firestore al listar usuarios: " + (error.message || error) });
+    }
+  });
+
+  // Crear nuevo usuario
+  app.post("/api/users", async (req, res) => {
+    try {
+      const { username, password, name, role } = req.body;
+      if (!username || !password || !name) {
+        return res.status(400).json({ error: "El nombre, el usuario/correo y la contraseña son obligatorios." });
+      }
+
+      const cleanUser = username.trim().toLowerCase();
+      const usersCol = firestoreDb.collection("users");
+      
+      // Validar si el username ya está en uso
+      const checkSnapshot = await usersCol.where("username", "==", cleanUser).get();
+      if (!checkSnapshot.empty) {
+        return res.status(400).json({ error: "El nombre de usuario o correo ya está registrado." });
+      }
+
+      const id = `usr_${Date.now()}`;
+      const newUser = {
+        username: cleanUser,
+        password: password.trim(),
+        name: name.trim(),
+        role: role || "Vendedor",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      await usersCol.doc(id).set(newUser);
+      console.log(`[Users Backend] Creado nuevo usuario: "${cleanUser}" con rol [${newUser.role}].`);
+      return res.json({ id, ...newUser });
+    } catch (error: any) {
+      console.error("Error creando usuario en Firestore:", error);
+      return res.status(500).json({ error: "Error de Firestore al crear usuario: " + (error.message || error) });
+    }
+  });
+
+  // Editar o actualizar usuario
+  app.put("/api/users/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { username, password, name, role } = req.body;
+      const docRef = firestoreDb.collection("users").doc(id);
+      const docSnap = await docRef.get();
+
+      if (!docSnap.exists) {
+        return res.status(404).json({ error: "Usuario no encontrado." });
+      }
+
+      const currentData = docSnap.data() || {};
+      const updateData: any = {};
+
+      if (username !== undefined) {
+        const cleanUser = username.trim().toLowerCase();
+        // Si cambia el username, verificar que no choque con otro usuario
+        if (cleanUser !== currentData.username) {
+          const checkSnapshot = await firestoreDb.collection("users").where("username", "==", cleanUser).get();
+          if (!checkSnapshot.empty) {
+            return res.status(400).json({ error: "El nombre de usuario o correo ya está en uso por otra cuenta." });
+          }
+        }
+        updateData.username = cleanUser;
+      }
+
+      if (password !== undefined) {
+        updateData.password = password.trim();
+      }
+      if (name !== undefined) {
+        updateData.name = name.trim();
+      }
+      if (role !== undefined) {
+        updateData.role = role;
+      }
+      updateData.updatedAt = new Date().toISOString();
+
+      await docRef.update(updateData);
+      console.log(`[Users Backend] Usuario ID "${id}" actualizado.`);
+      
+      const freshSnap = await docRef.get();
+      return res.json({ id, ...freshSnap.data() });
+    } catch (error: any) {
+      console.error("Error actualizando usuario en Firestore:", error);
+      return res.status(500).json({ error: "Error de Firestore al actualizar usuario: " + (error.message || error) });
+    }
+  });
+
+  // Eliminar un usuario
+  app.delete("/api/users/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const docRef = firestoreDb.collection("users").doc(id);
+      const docSnap = await docRef.get();
+
+      if (!docSnap.exists) {
+        return res.status(404).json({ error: "Usuario no encontrado en Firestore." });
+      }
+
+      // Impedir que se borre el último administrador para no quedar bloqueados
+      const userData = docSnap.data() || {};
+      if (userData.role === "Administrador") {
+        const adminsSnapshot = await firestoreDb.collection("users").where("role", "==", "Administrador").get();
+        if (adminsSnapshot.size <= 1) {
+          return res.status(400).json({ error: "No se puede eliminar el último Administrador del sistema." });
+        }
+      }
+
+      await docRef.delete();
+      console.log(`[Users Backend] Usuario ID "${id}" eliminado.`);
+      return res.json({ success: true });
+    } catch (error: any) {
+      console.error("Error eliminando usuario de Firestore:", error);
+      return res.status(500).json({ error: "Error de Firestore al eliminar usuario: " + (error.message || error) });
     }
   });
 
