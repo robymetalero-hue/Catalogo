@@ -113,9 +113,8 @@ export default function AdminPanel({
     setSyncingCloud(true);
     let sqlSyncedCount = 0;
     let lastSqlError = "";
-    let lastFsError = "";
     try {
-      showToast("Sincronizando productos locales con la base de datos de la nube...");
+      showToast("Sincronizando productos locales con la base de datos PostgreSQL de Google Cloud...");
       
       // 1. Sync with Cloud SQL (PostgreSQL)
       try {
@@ -135,80 +134,41 @@ export default function AdminPanel({
           } catch (e) {
             lastSqlError = `Código HTTP: ${res.status}`;
           }
-          console.warn("Fallo el seed de PostgreSQL, seguiremos con Firestore...", lastSqlError);
         }
       } catch (sqlErr: any) {
         lastSqlError = sqlErr.message || String(sqlErr);
-        console.warn("Error enviando seed a Cloud SQL, continuaremos con Firestore:", sqlErr);
       }
 
-      // 2. Sync with Firebase Firestore (direct client-side operation: 100% reliable)
-      let firestoreSyncedCount = 0;
-      for (const p of products) {
-        try {
-          const docRef = doc(db, "products", p.id);
-          await setDoc(docRef, {
-            id: p.id,
-            sku: p.sku || "",
-            name: p.name || "",
-            description: p.description || "",
-            category: p.category || "",
-            retailPrice: Number(p.retailPrice) || 0,
-            wholesalePrice: Number(p.wholesalePrice) || 0,
-            images: p.images || [],
-            videoUrl: p.videoUrl || "",
-            isAvailable: p.isAvailable ?? true,
-            views: p.views || 0,
-            whatsappClicks: p.whatsappClicks || 0,
-            createdAt: p.createdAt ? new Date(p.createdAt) : new Date(),
-            updatedAt: new Date()
-          });
-          firestoreSyncedCount++;
-        } catch (fsErr: any) {
-          lastFsError = fsErr.message || String(fsErr);
-          console.error(`Error al guardar producto ${p.id} en Firestore:`, fsErr);
-        }
-      }
-
-      // 3. Sync store configuration to Firestore as well
-      let lastConfError = "";
+      // 2. Sync store configuration to PostgreSQL as well
+      let configSaved = false;
       try {
-        const configDocRef = doc(db, "storeConfig", "default");
-        await setDoc(configDocRef, {
-          storeName: storeConfig.storeName || "Mi Catálogo de WhatsApp",
-          address: storeConfig.address || "",
-          phone: storeConfig.phone || "",
-          whatsappNumber: storeConfig.whatsappNumber || "",
-          whatsappCustomMessage: storeConfig.whatsappCustomMessage || "",
-          locationUrl: storeConfig.locationUrl || "",
-          showPrices: storeConfig.showPrices ?? true,
-          updatedAt: new Date()
+        const res = await fetch("/api/store-config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(storeConfig)
         });
-      } catch (fsConfErr: any) {
-        lastConfError = fsConfErr.message || String(fsConfErr);
-        console.error("Error al sincronizar storeConfig en Firestore:", fsConfErr);
+        if (res.ok) {
+          configSaved = true;
+        }
+      } catch (err) {
+        console.warn("Fallo sincronizando config en la nube:", err);
       }
 
-      // Dynamic success message depending on sync success
-      if (sqlSyncedCount > 0 || firestoreSyncedCount > 0) {
-        let msg = `¡Sincronización finalizada! Se subieron ${sqlSyncedCount} artículos a PostgreSQL y ${firestoreSyncedCount} a Firestore.`;
-        if (sqlSyncedCount === 0 && lastSqlError) {
-          msg += ` (PostgreSQL falló: ${lastSqlError})`;
-        }
-        if (firestoreSyncedCount === 0 && lastFsError) {
-          msg += ` (Firestore falló: ${lastFsError})`;
+      if (sqlSyncedCount > 0) {
+        let msg = `¡Sincronización finalizada! Se guardaron ${sqlSyncedCount} artículos de forma segura en Google Cloud SQL.`;
+        if (configSaved) {
+          msg += " Se actualizó la configuración de la tienda.";
         }
         showToast(msg);
       } else {
-        let errMsg = "No se pudieron guardar los artículos en las bases de datos de la nube.";
-        if (lastSqlError) errMsg += ` [SQL: ${lastSqlError}]`;
-        if (lastFsError) errMsg += ` [Firestore: ${lastFsError}]`;
+        let errMsg = "No se pudieron guardar los artículos en Google Cloud SQL.";
+        if (lastSqlError) errMsg += ` [Detalle: ${lastSqlError}]`;
         showToast(errMsg, "error");
       }
       onRefreshProducts();
     } catch (error: any) {
       console.error("Error al sincronizar con la nube:", error);
-      showToast(`Error al sincronizar con la nube: ${error.message || error}`, "error");
+      showToast(`Error al sincronizar: ${error.message || error}`, "error");
     } finally {
       setSyncingCloud(false);
     }
@@ -333,7 +293,49 @@ export default function AdminPanel({
     });
   };
 
-  // Media upload handler with actual progress, timeout fallbacks, size checks, and clear errors
+  // Core Helper: Direct Upload to our Node/Express Backend which uploads to GCS or stores locally
+  const uploadWithProgress = (
+    file: File, 
+    onProgress: (percent: number) => void
+  ): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/upload");
+      
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          const percent = Math.round((event.loaded / event.total) * 100);
+          onProgress(percent);
+        }
+      };
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const data = JSON.parse(xhr.responseText);
+            if (data.urls && data.urls.length > 0) {
+              resolve(data.urls[0]);
+            } else {
+              reject(new Error("No se devolvió la URL del archivo desde el servidor de Google Cloud."));
+            }
+          } catch (e) {
+            reject(new Error("Respuesta inválida del servidor."));
+          }
+        } else {
+          reject(new Error(`Error del servidor: Código de estado HTTP ${xhr.status}`));
+        }
+      };
+
+      xhr.onerror = () => reject(new Error("Error de red cargando el archivo al servidor."));
+      xhr.ontimeout = () => reject(new Error("Tiempo de espera agotado en la red."));
+
+      const formData = new FormData();
+      formData.append("files", file);
+      xhr.send(formData);
+    });
+  };
+
+  // Media upload handler with actual progress, size checks, and clear errors
   const handleMediaUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -381,65 +383,22 @@ export default function AdminPanel({
       );
 
       const uploadedUrls: string[] = [];
-      const failedToStorageFiles: File[] = [];
 
-      // 2. Primary Upload Loop: Firebase Storage with fine-grained progress and cancellation timers
+      // 2. Upload Loop to Backend with real percentage progress
       let index = 1;
       for (const file of processedFiles) {
-        try {
-          const url = await uploadToStorageWithProgress(
-            file, 
-            (percent) => {
-              setUploadProgressMsg(`Subiendo archivo ${index} de ${processedFiles.length} (${percent}%)...`);
-            },
-            25000 // 25 seconds timeout limit
-          );
-          
-          if (url) {
-            uploadedUrls.push(url);
-            console.log(`[Storage] Archivo subido duraderamente a Firebase Storage: ${url}`);
-          }
-        } catch (storageErr: any) {
-          console.warn(`[Storage Fallback] Direct Firebase Storage falló para "${file.name}" (${storageErr.message || storageErr}), intentando backend API...`);
-          failedToStorageFiles.push(file);
+        setUploadProgressMsg(`Subiendo archivo ${index} de ${processedFiles.length} (0%)...`);
+        const url = await uploadWithProgress(file, (percent) => {
+          setUploadProgressMsg(`Subiendo archivo ${index} de ${processedFiles.length} (${percent}%)...`);
+        });
+        if (url) {
+          uploadedUrls.push(url);
+          console.log(`[Google Cloud] Archivo subido y registrado local/GCS: ${url}`);
         }
         index++;
       }
 
-      // 3. Secondary Backup: Server-side upload (/api/upload endpoint) with static container persistence
-      if (failedToStorageFiles.length > 0) {
-        setUploadProgressMsg(`Sincronizando ${failedToStorageFiles.length} archivo(s) restante(s) con el servidor...`);
-        try {
-          const formData = new FormData();
-          for (const file of failedToStorageFiles) {
-            formData.append("files", file);
-          }
-          
-          const res = await fetch("/api/upload", {
-            method: "POST",
-            body: formData,
-          });
-
-          if (res.ok) {
-            const uploadData = await res.json();
-            const urls: string[] = uploadData.urls || [];
-            uploadedUrls.push(...urls);
-            console.log("[Fallback] Archivos sincronizados en servidor satisfactoriamente.");
-          } else {
-            console.error("[Fallback Error] Falló respuesta del servidor en fallback.");
-            if (uploadedUrls.length === 0) {
-              throw new Error("No se pudo subir ningún archivo de catálogo en Firestore Storage ni en el servidor.");
-            }
-          }
-        } catch (apiErr: any) {
-          console.error("[Fallback Error] Error de comunicación durante fallback de subida:", apiErr);
-          if (uploadedUrls.length === 0) {
-            throw new Error(`Tanto Cloud Storage como el servidor de respaldo fallaron. (${apiErr.message || apiErr})`);
-          }
-        }
-      }
-
-      // 4. Update state fields in form
+      // 3. Update state fields in form
       const newImages: string[] = [];
       let lastVideo = "";
 
@@ -468,7 +427,7 @@ export default function AdminPanel({
         setVideoUrl(lastVideo);
       }
 
-      showToast(`¡Carga completada! Subidos ${uploadedUrls.length} archivo(s) optimizado(s) con éxito.`);
+      showToast(`¡Carga completada! Subidos ${uploadedUrls.length} archivo(s) optimizado(s) de forma segura.`);
     } catch (err: any) {
       console.error("Carga de archivos fallida: ", err);
       setUploadError(err.message || String(err));
@@ -480,11 +439,10 @@ export default function AdminPanel({
     }
   };
 
-  // Action: Save general config to Firestore
+  // Action: Save general config to Google Cloud SQL (PostgreSQL)
   const handleSaveStoreConfig = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    const path = "storeConfig/default";
     
     const updatedData: StoreConfig = {
       storeName: storeName.trim(),
@@ -504,39 +462,24 @@ export default function AdminPanel({
     } catch (err) {}
 
     try {
-      // 1. Primary Write: Save config directly to Firestore Cloud (100% reliable)
-      const configDocRef = doc(db, "storeConfig", "default");
-      await setDoc(configDocRef, {
-        storeName: storeName.trim(),
-        address: address.trim(),
-        phone: phone.trim(),
-        whatsappNumber: whatsappNumber.trim().replace(/[^0-9]/g, ""),
-        whatsappCustomMessage: whatsappCustomMessage.trim(),
-        locationUrl: locationUrl.trim(),
-        showPrices: !!showPrices,
-        updatedAt: new Date()
+      // Save directly to our standard Express API
+      const res = await fetch("/api/store-config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updatedData)
       });
-      console.log("Configuración de tienda guardada exitosamente en Firestore Cloud!");
 
-      // 2. Secondary Write: Quietly notify the PostgreSQL container backend if active
-      try {
-        const res = await fetch("/api/store-config", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(updatedData)
-        });
-        if (!res.ok) {
-          console.warn("PostgreSQL backend did not accept save request (expected if on static hosting)");
-        }
-      } catch (pgErr) {
-        console.warn("No se pudo sincronizar la configuración en Postgres (servidor apagado o static hosting):", pgErr);
+      if (!res.ok) {
+        const errJson = await res.json();
+        throw new Error(errJson.error || `HTTP ${res.status}`);
       }
 
-      showToast("Configuración general guardada exitosamente en Firestore Cloud");
-      onRefreshConfig(); // Sincroniza la información real desde la BD
+      console.log("Configuración de tienda guardada exitosamente en Google Cloud SQL!");
+      showToast("Configuración general guardada exitosamente en Google Cloud SQL");
+      onRefreshConfig(); // Synchronize the real config from DB
     } catch (error: any) {
-      console.error("Could not save config to Firestore:", error);
-      showToast(`Error al guardar configuración: ${error.message || error}`, "error");
+      console.error("Could not write config to Google Cloud SQL:", error);
+      showToast(`Error al guardar configuración en Google Cloud SQL: ${error.message || error}`, "error");
     } finally {
       setLoading(false);
     }
@@ -608,7 +551,6 @@ export default function AdminPanel({
 
     setLoading(true);
     const id = editingProductId || `prod_${Date.now()}`;
-    const path = `products/${id}`;
 
     // Filter valid URLs (discard empty ones and support both absolute links and local /uploads/ uploads)
     const filteredImages = imagesList
@@ -625,45 +567,33 @@ export default function AdminPanel({
     let updatedProductsList: Product[] = [];
     let savedMsg = "";
 
+    const reqObj: any = {
+      id,
+      sku: sku.trim(),
+      name: name.trim(),
+      description: description.trim(),
+      category: finalCategory || "Otros",
+      retailPrice: Number(retailPrice) || 0,
+      wholesalePrice: Number(wholesalePrice) || 0,
+      images: filteredImages,
+      videoUrl: videoUrl.trim(),
+      isAvailable: !!isAvailable,
+      updatedAt: currentTime
+    };
+
     if (editingProductId) {
       // Edit flow
-      const updatedItemFields = {
-        sku: sku.trim(),
-        name: name.trim(),
-        description: description.trim(),
-        category: finalCategory || "Otros",
-        retailPrice: Number(retailPrice) || 0,
-        wholesalePrice: Number(wholesalePrice) || 0,
-        images: filteredImages,
-        videoUrl: videoUrl.trim(),
-        isAvailable: !!isAvailable,
-        updatedAt: currentTime
-      };
-
+      reqObj.id = editingProductId;
       updatedProductsList = products.map((p) => 
-        p.id === id ? { ...p, ...updatedItemFields } : p
+        p.id === editingProductId ? { ...p, ...reqObj } : p
       );
       savedMsg = "Producto actualizado con éxito";
     } else {
       // Create flow
-      const newItem: Product = {
-        id,
-        sku: sku.trim(),
-        name: name.trim(),
-        description: description.trim(),
-        category: finalCategory || "Otros",
-        retailPrice: Number(retailPrice) || 0,
-        wholesalePrice: Number(wholesalePrice) || 0,
-        images: filteredImages,
-        videoUrl: videoUrl.trim(),
-        isAvailable: !!isAvailable,
-        createdAt: currentTime,
-        updatedAt: currentTime,
-        views: 0,
-        whatsappClicks: 0
-      };
-
-      updatedProductsList = [newItem, ...products];
+      reqObj.createdAt = currentTime;
+      reqObj.views = 0;
+      reqObj.whatsappClicks = 0;
+      updatedProductsList = [reqObj, ...products];
       savedMsg = "Producto agregado al catálogo";
     }
 
@@ -676,83 +606,33 @@ export default function AdminPanel({
     setIsEditingProduct(false);
 
     try {
-      // 1. Primary Write: Save product directly to Firestore (bulletproof cloud database)
-      const firestoreProductPath = doc(db, "products", id);
-      const fsProductObj = {
-        id,
-        sku: sku.trim(),
-        name: name.trim(),
-        description: description.trim(),
-        category: finalCategory || "Otros",
-        retailPrice: Number(retailPrice) || 0,
-        wholesalePrice: Number(wholesalePrice) || 0,
-        images: filteredImages,
-        videoUrl: videoUrl.trim(),
-        isAvailable: !!isAvailable,
-        createdAt: editingProductId 
-          ? (products.find(p => p.id === id)?.createdAt 
-              ? new Date(products.find(p => p.id === id)!.createdAt) 
-              : currentTime) 
-          : currentTime,
-        updatedAt: currentTime,
-        views: editingProductId ? (products.find(p => p.id === id)?.views || 0) : 0,
-        whatsappClicks: editingProductId ? (products.find(p => p.id === id)?.whatsappClicks || 0) : 0
-      };
-      await setDoc(firestoreProductPath, fsProductObj);
-      console.log("Producto guardado exitosamente en Firestore Cloud!");
-
-      // 2. Secondary Write: PostgreSQL quiet sync (expected to gracefully fail on static hostings like Firebase Hosting)
-      try {
-        if (editingProductId) {
-          const reqObj = {
-            sku: sku.trim(),
-            name: name.trim(),
-            description: description.trim(),
-            category: finalCategory || "Otros",
-            retailPrice: Number(retailPrice) || 0,
-            wholesalePrice: Number(wholesalePrice) || 0,
-            images: filteredImages,
-            videoUrl: videoUrl.trim(),
-            isAvailable: !!isAvailable,
-            updatedAt: currentTime
-          };
-          await fetch(`/api/products/${editingProductId}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(reqObj)
-          });
-        } else {
-          const reqObj = {
-            id,
-            sku: sku.trim(),
-            name: name.trim(),
-            description: description.trim(),
-            category: finalCategory || "Otros",
-            retailPrice: Number(retailPrice) || 0,
-            wholesalePrice: Number(wholesalePrice) || 0,
-            images: filteredImages,
-            videoUrl: videoUrl.trim(),
-            isAvailable: !!isAvailable,
-            createdAt: currentTime,
-            updatedAt: currentTime,
-            views: 0,
-            whatsappClicks: 0
-          };
-          await fetch("/api/products", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(reqObj)
-          });
-        }
-      } catch (pgErr) {
-        console.warn("No se pudo sincronizar producto con Postgres (servidor inactivo o static hosting):", pgErr);
+      // Save product directly to Google Cloud SQL (PostgreSQL API)
+      let res;
+      if (editingProductId) {
+        res = await fetch(`/api/products/${editingProductId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(reqObj)
+        });
+      } else {
+        res = await fetch("/api/products", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(reqObj)
+        });
       }
 
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || `Error del servidor HTTP ${res.status}`);
+      }
+
+      console.log("Producto guardado exitosamente en Google Cloud SQL!");
       showToast(savedMsg);
-      onRefreshProducts(); // Sincroniza localmente
+      onRefreshProducts(); // Synchronize local state
     } catch (error: any) {
-      console.error("Could not write product to Firestore Cloud:", error);
-      showToast(`Error al guardar producto en base de datos: ${error.message || error}`, "error");
+      console.error("Could not write product to Google Cloud SQL:", error);
+      showToast(`Error al guardar producto en la base de datos de Google Cloud: ${error.message || error}`, "error");
     } finally {
       setLoading(false);
     }
@@ -772,25 +652,22 @@ export default function AdminPanel({
     } catch (e) {}
 
     try {
-      // 1. Primary Delete: Remove product directly from Firestore
-      const firestoreProductPath = doc(db, "products", id);
-      await deleteDoc(firestoreProductPath);
-      console.log("Producto eliminado de Firestore Cloud!");
+      // Delete from Google Cloud SQL directly
+      const res = await fetch(`/api/products/${id}`, {
+        method: "DELETE"
+      });
 
-      // 2. Secondary Delete: Quietly request deleting from Postgres backend
-      try {
-        await fetch(`/api/products/${id}`, {
-          method: "DELETE"
-        });
-      } catch (pgErr) {
-        console.warn("No se pudo eliminar en Postgres (servidor inactivo o static hosting):", pgErr);
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || `Error del servidor HTTP ${res.status}`);
       }
 
+      console.log("Producto eliminado de Google Cloud SQL!");
       showToast("Producto eliminado del catálogo");
-      onRefreshProducts(); // Sincroniza localmente
+      onRefreshProducts(); // Synchronize local state
     } catch (error: any) {
-      console.error("Could not delete from Firestore:", error);
-      showToast(`Error al eliminar producto de la base de datos: ${error.message || error}`, "error");
+      console.error("Could not delete product from Google Cloud SQL:", error);
+      showToast(`Error al eliminar producto en la base de datos de Google Cloud: ${error.message || error}`, "error");
     } finally {
       setLoading(false);
     }

@@ -114,126 +114,67 @@ export default function App() {
   const [loginPassword, setLoginPassword] = useState("");
   const [localLoginError, setLocalLoginError] = useState<string | null>(null);
 
-  // Fetch functions setting Firestore as primary and PostgreSQL as secondary / dual-sync
+  // Fetch functions setting Google Cloud SQL (PostgreSQL) as the only primary source of truth
   const fetchProducts = async () => {
-    // 1. Try Firestore First (Primary - 100% cloud synced)
-    try {
-      const q = query(collection(db, "products"));
-      const snapshot = await getDocs(q);
-      const fsProducts: Product[] = [];
-      snapshot.forEach((docSnap) => {
-        const d = docSnap.data();
-        fsProducts.push({
-          id: docSnap.id,
-          sku: d.sku || "",
-          name: d.name || "",
-          description: d.description || "",
-          category: d.category || "",
-          retailPrice: Number(d.retailPrice) || 0,
-          wholesalePrice: Number(d.wholesalePrice) || 0,
-          images: d.images || [],
-          videoUrl: d.videoUrl || "",
-          isAvailable: d.isAvailable ?? true,
-          views: d.views || 0,
-          whatsappClicks: d.whatsappClicks || 0,
-          createdAt: d.createdAt instanceof Timestamp ? d.createdAt.toDate() : (d.createdAt ? new Date(d.createdAt) : new Date()),
-          updatedAt: d.updatedAt instanceof Timestamp ? d.updatedAt.toDate() : (d.updatedAt ? new Date(d.updatedAt) : new Date()),
-        });
-      });
-
-      fsProducts.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-
-      if (fsProducts.length > 0) {
-        console.log("Productos cargados exitosamente de Firestore Cloud!");
-        setIsUsingCache(false);
-        setProducts(fsProducts);
-        localStorage.setItem("local_products_cache", JSON.stringify(fsProducts));
-        const cats = Array.from(new Set(fsProducts.map((item: Product) => item.category).filter(Boolean)));
-        setCategories(["Todos", ...cats]);
-        
-        // Non-blocking background sync with SQL
-        fetch("/api/products/seed", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(fsProducts),
-        }).catch(() => {});
-        
-        return;
-      }
-    } catch (fsErr) {
-      console.warn("No se pudo cargar productos desde Firestore Cloud, intentando PostgreSQL y Caché:", fsErr);
-    }
-
-    // 2. Try PostgreSQL first
     try {
       const res = await fetch("/api/products");
       if (res.ok) {
         const data = await res.json();
-        if (data && data.length > 0) {
-          setIsUsingCache(false);
-          setProducts(data);
-          localStorage.setItem("local_products_cache", JSON.stringify(data));
-          const cats = Array.from(new Set(data.map((item: Product) => item.category).filter(Boolean)));
-          setCategories(["Todos", ...cats]);
-          return;
-        }
+        // Standardize timestamps and prices
+        const processedProducts = data.map((p: any) => ({
+          ...p,
+          createdAt: p.createdAt ? new Date(p.createdAt) : new Date(),
+          updatedAt: p.updatedAt ? new Date(p.updatedAt) : new Date(),
+        }));
+        
+        setIsUsingCache(false);
+        setProducts(processedProducts);
+        localStorage.setItem("local_products_cache", JSON.stringify(processedProducts));
+        const cats = Array.from(new Set(processedProducts.map((item: Product) => item.category).filter(Boolean)));
+        setCategories(["Todos", ...cats]);
+        return;
+      } else {
+        const errJson = await res.json();
+        console.warn("Error del servidor obteniendo productos:", errJson);
       }
     } catch (e) {
-      console.warn("No se pudo conectar a Cloud SQL:", e);
+      console.warn("No se pudo conectar a Google Cloud SQL, intentando Caché local:", e);
     }
 
-    // 3. Last fallback: static cache
+    // Fallback: static cache
     loadProductsStatically();
   };
 
   const fetchStoreConfig = async () => {
-    // 1. Try Firestore First (Primary - 100% cloud synced)
-    try {
-      const docRef = doc(db, "storeConfig", "default");
-      const docSnap = await getDocFromServer(docRef);
-      if (docSnap.exists()) {
-        const d = docSnap.data();
-        const data: StoreConfig = {
-          storeName: d.storeName || "Mi Catálogo de WhatsApp",
-          address: d.address || "",
-          phone: d.phone || "",
-          whatsappNumber: d.whatsappNumber || "",
-          whatsappCustomMessage: d.whatsappCustomMessage || "",
-          locationUrl: d.locationUrl || "",
-          showPrices: d.showPrices ?? true,
-          updatedAt: d.updatedAt instanceof Timestamp ? d.updatedAt.toDate() : (d.updatedAt ? new Date(d.updatedAt) : new Date()),
-        };
-        console.log("Configuración de tienda cargada exitosamente de Firestore Cloud!");
-        setStoreConfig(data);
-        localStorage.setItem("local_store_config_cache", JSON.stringify(data));
-
-        // Non-blocking background sync with SQL
-        fetch("/api/store-config", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(data),
-        }).catch(() => {});
-
-        return;
-      }
-    } catch (fsErr) {
-      console.warn("No se pudo leer store-config desde Firestore Cloud, intentando PostgreSQL...", fsErr);
-    }
-
-    // 2. Fallback to direct client-side PostgreSQL
     try {
       const res = await fetch("/api/store-config");
       if (res.ok) {
         const data = await res.json();
-        if (data && data.storeName && data.storeName !== "Mi Catálogo de WhatsApp") {
-          setStoreConfig(data);
-          localStorage.setItem("local_store_config_cache", JSON.stringify(data));
-          return;
-        }
+        const configData: StoreConfig = {
+          storeName: data.storeName || "Mi Catálogo de WhatsApp",
+          address: data.address || "",
+          phone: data.phone || "",
+          whatsappNumber: data.whatsappNumber || "",
+          whatsappCustomMessage: data.whatsappCustomMessage || "",
+          locationUrl: data.locationUrl || "",
+          showPrices: data.showPrices ?? true,
+          updatedAt: data.updatedAt ? new Date(data.updatedAt) : new Date(),
+        };
+        setStoreConfig(configData);
+        localStorage.setItem("local_store_config_cache", JSON.stringify(configData));
+        return;
       }
     } catch (e) {
-      console.warn("Error leyendo store-config de Cloud SQL:", e);
+      console.warn("Error leyendo store-config de Google Cloud SQL:", e);
     }
+
+    // Fallback cache
+    try {
+      const saved = localStorage.getItem("local_store_config_cache");
+      if (saved) {
+        setStoreConfig(JSON.parse(saved));
+      }
+    } catch (err) {}
   };
 
   const refreshAll = async () => {
@@ -242,92 +183,9 @@ export default function App() {
     setLoadingApp(false);
   };
 
-  // Real-time synchronization using Firestore onSnapshot
+  // Initial load of products and configuration from Google Cloud SQL (PostgreSQL)
   useEffect(() => {
-    setLoadingApp(true);
-    
-    // 1. Listen for Products (real-time stream)
-    const productsRef = collection(db, "products");
-    const unsubscribeProducts = onSnapshot(
-      productsRef,
-      (snapshot) => {
-        const fsProducts: Product[] = [];
-        snapshot.forEach((docSnap) => {
-          const d = docSnap.data();
-          fsProducts.push({
-            id: docSnap.id,
-            sku: d.sku || "",
-            name: d.name || "",
-            description: d.description || "",
-            category: d.category || "",
-            retailPrice: Number(d.retailPrice) || 0,
-            wholesalePrice: Number(d.wholesalePrice) || 0,
-            images: d.images || [],
-            videoUrl: d.videoUrl || "",
-            isAvailable: d.isAvailable ?? true,
-            views: d.views || 0,
-            whatsappClicks: d.whatsappClicks || 0,
-            createdAt: d.createdAt instanceof Timestamp ? d.createdAt.toDate() : (d.createdAt ? new Date(d.createdAt) : new Date()),
-            updatedAt: d.updatedAt instanceof Timestamp ? d.updatedAt.toDate() : (d.updatedAt ? new Date(d.updatedAt) : new Date()),
-          });
-        });
-
-        // Sort in-memory safely to preserve chronological order
-        fsProducts.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-
-        if (fsProducts.length > 0) {
-          console.log("Productos sincronizados en tiempo real de Firestore!");
-          setProducts(fsProducts);
-          setIsUsingCache(false);
-          localStorage.setItem("local_products_cache", JSON.stringify(fsProducts));
-          
-          const cats = Array.from(new Set(fsProducts.map((item) => item.category).filter(Boolean)));
-          setCategories(["Todos", ...cats]);
-        } else {
-          // If Firestore is empty, try loading static cached products or call fetchProducts to poll backends
-          loadProductsStatically();
-        }
-        setLoadingApp(false);
-      },
-      (error) => {
-        console.error("Error en conexión en tiempo real de productos Firestore:", error);
-        loadProductsStatically();
-      }
-    );
-
-    // 2. Listen for Store Configuration (real-time stream)
-    const configDocRef = doc(db, "storeConfig", "default");
-    const unsubscribeConfig = onSnapshot(
-      configDocRef,
-      (docSnap) => {
-        if (docSnap.exists()) {
-          const d = docSnap.data();
-          const data: StoreConfig = {
-            storeName: d.storeName || "Mi Catálogo de WhatsApp",
-            address: d.address || "",
-            phone: d.phone || "",
-            whatsappNumber: d.whatsappNumber || "",
-            whatsappCustomMessage: d.whatsappCustomMessage || "",
-            locationUrl: d.locationUrl || "",
-            showPrices: d.showPrices ?? true,
-            updatedAt: d.updatedAt instanceof Timestamp ? d.updatedAt.toDate() : (d.updatedAt ? new Date(d.updatedAt) : new Date()),
-          };
-          console.log("Configuración de tienda sincronizada en tiempo real de Firestore!");
-          setStoreConfig(data);
-          localStorage.setItem("local_store_config_cache", JSON.stringify(data));
-        } else {
-          fetchStoreConfig();
-        }
-      },
-      (error) => {
-        console.error("Error en conexión en tiempo real de configuración Firestore:", error);
-      }
-    );
-
-    return () => {
-      unsubscribeProducts();
-      unsubscribeConfig();
-    };
+    refreshAll();
   }, []);
 
   // Synchronize local cached products automatically in background when admin mounts the app
@@ -458,7 +316,7 @@ export default function App() {
       localStorage.setItem("local_products_cache", JSON.stringify(updated));
     } catch (e) {}
 
-    // 1. Try PostgreSQL tracking
+    // Track in Google Cloud SQL
     try {
       await fetch(`/api/products/${product.id}`, {
         method: "PUT",
@@ -467,16 +325,6 @@ export default function App() {
       });
     } catch (err) {
       console.warn("Could not track view metrics in Cloud SQL.", err);
-    }
-
-    // 2. Try Firestore tracking
-    try {
-      const docRef = doc(db, "products", product.id);
-      await updateDoc(docRef, {
-        views: increment(1)
-      });
-    } catch (fsErr) {
-      console.warn("Could not track view in Firestore:", fsErr);
     }
   };
 
@@ -488,7 +336,7 @@ export default function App() {
       localStorage.setItem("local_products_cache", JSON.stringify(updated));
     } catch (e) {}
 
-    // 1. Try PostgreSQL tracking
+    // Track in Google Cloud SQL
     try {
       await fetch(`/api/products/${product.id}`, {
         method: "PUT",
@@ -497,16 +345,6 @@ export default function App() {
       });
     } catch (err) {
       console.warn("Could not track WhatsApp click in Cloud SQL.", err);
-    }
-
-    // 2. Try Firestore tracking
-    try {
-      const docRef = doc(db, "products", product.id);
-      await updateDoc(docRef, {
-        whatsappClicks: increment(1)
-      });
-    } catch (fsErr) {
-      console.warn("Could not track WhatsApp click in Firestore:", fsErr);
     }
   };
 
