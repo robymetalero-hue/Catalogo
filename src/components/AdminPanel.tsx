@@ -10,7 +10,7 @@ import {
   collection, doc, setDoc, deleteDoc, updateDoc
 } from "firebase/firestore";
 import { 
-  ref, uploadBytes, getDownloadURL 
+  ref, uploadBytes, getDownloadURL, uploadBytesResumable 
 } from "firebase/storage";
 import { 
   Store, Plus, Edit2, Trash2, Save, X, Eye, EyeOff, Video, Link, Check, Image as ImageIcon, Sparkles, FolderPlus, Phone, TrendingUp, ThumbsUp, BarChart2, Upload, CloudUpload, RefreshCw
@@ -82,6 +82,7 @@ export default function AdminPanel({
   const [imagesList, setImagesList] = useState<string[]>([""]);
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [uploadError, setUploadError] = useState("");
+  const [uploadProgressMsg, setUploadProgressMsg] = useState("");
 
   // Sync state with incoming props
   useEffect(() => {
@@ -289,24 +290,91 @@ export default function AdminPanel({
     });
   };
 
-  // Media upload handler for PC / Android files selecting multiple at once
+  // Core Helper: Direct Upload to Firebase Storage with strict time-limits and live percentage state callbacks
+  const uploadToStorageWithProgress = (
+    file: File, 
+    onProgress: (percent: number) => void,
+    timeoutMs: number = 25000 // 25s timeout limit per file for massive bandwidths
+  ): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const uniqueId = `${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
+      const cleanName = file.name.replace(/[^a-zA-Z0-9.\-_]/g, "_");
+      const fileRef = ref(storage, `catalog/${uniqueId}_${cleanName}`);
+      
+      const uploadTask = uploadBytesResumable(fileRef, file);
+      
+      const timer = setTimeout(() => {
+        uploadTask.cancel();
+        reject(new Error("Timeout de subida superado en Firebase Storage"));
+      }, timeoutMs);
+      
+      uploadTask.on(
+        "state_changed", 
+        (snapshot) => {
+          const progress = snapshot.totalBytes > 0 
+            ? Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100) 
+            : 0;
+          onProgress(progress);
+        }, 
+        (error) => {
+          clearTimeout(timer);
+          reject(error);
+        }, 
+        async () => {
+          clearTimeout(timer);
+          try {
+            const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+            resolve(downloadURL);
+          } catch (err) {
+            reject(err);
+          }
+        }
+      );
+    });
+  };
+
+  // Media upload handler with actual progress, timeout fallbacks, size checks, and clear errors
   const handleMediaUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
     setUploadingMedia(true);
     setUploadError("");
+    setUploadProgressMsg("Iniciando carga de medios...");
 
     try {
       const filesArray = Array.from(files) as File[];
 
-      // Compress and process all selected images in parallel before sending to server
-      const processedFiles = await Promise.all(
+      // 1. Explicit Client-side Validation (File type and max sizes)
+      for (const file of filesArray) {
+        const isImage = file.type.startsWith("image/");
+        const isVideo = file.type.startsWith("video/");
+
+        if (!isImage && !isVideo) {
+          throw new Error(`El archivo "${file.name}" no es un formato de imagen o video compatible.`);
+        }
+
+        if (isImage && file.size > 15 * 1024 * 1024) {
+          throw new Error(`La imagen "${file.name}" supera el tamaño máximo permitido de 15MB.`);
+        }
+
+        if (isVideo && file.size > 60 * 1024 * 1024) {
+          throw new Error(`El video "${file.name}" supera el tamaño máximo permitido de 60MB.`);
+        }
+      }
+
+      setUploadProgressMsg("Procesando y optimizando imágenes para la web...");
+      
+      // Parallel image compression (optimized for fluid experience)
+      const processedFiles: File[] = await Promise.all(
         filesArray.map(async (file) => {
           try {
-            return await compressImage(file);
+            if (file.type.startsWith("image/")) {
+              return await compressImage(file);
+            }
+            return file;
           } catch (compressErr) {
-            console.error("Fallo al comprimir archivo individual, se subirá original:", compressErr);
+            console.warn(`[Optimización] Falló compresión de ${file.name}, usando original:`, compressErr);
             return file;
           }
         })
@@ -315,29 +383,32 @@ export default function AdminPanel({
       const uploadedUrls: string[] = [];
       const failedToStorageFiles: File[] = [];
 
-      // Try uploading to Firebase Storage first (prefer durable cloud storage)
+      // 2. Primary Upload Loop: Firebase Storage with fine-grained progress and cancellation timers
+      let index = 1;
       for (const file of processedFiles) {
         try {
-          const uniqueId = `${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
-          // Clean file name to avoid path traversal or illegal characters
-          const cleanName = file.name.replace(/[^a-zA-Z0-9.\-_]/g, "_");
-          const fileRef = ref(storage, `catalog/${uniqueId}_${cleanName}`);
-          
-          await uploadBytes(fileRef, file);
-          const url = await getDownloadURL(fileRef);
+          const url = await uploadToStorageWithProgress(
+            file, 
+            (percent) => {
+              setUploadProgressMsg(`Subiendo archivo ${index} de ${processedFiles.length} (${percent}%)...`);
+            },
+            25000 // 25 seconds timeout limit
+          );
           
           if (url) {
             uploadedUrls.push(url);
-            console.log(`Foto/Video subido exitosamente a Firebase Storage: ${url}`);
+            console.log(`[Storage] Archivo subido duraderamente a Firebase Storage: ${url}`);
           }
-        } catch (storageErr) {
-          console.warn(`Direct Firebase Storage falló para ${file.name}, intentando fallback a API del servidor:`, storageErr);
+        } catch (storageErr: any) {
+          console.warn(`[Storage Fallback] Direct Firebase Storage falló para "${file.name}" (${storageErr.message || storageErr}), intentando backend API...`);
           failedToStorageFiles.push(file);
         }
+        index++;
       }
 
-      // If any files failed direct Firebase Storage upload, try backend Express API endpoint fallback
+      // 3. Secondary Backup: Server-side upload (/api/upload endpoint) with static container persistence
       if (failedToStorageFiles.length > 0) {
+        setUploadProgressMsg(`Sincronizando ${failedToStorageFiles.length} archivo(s) restante(s) con el servidor...`);
         try {
           const formData = new FormData();
           for (const file of failedToStorageFiles) {
@@ -353,21 +424,22 @@ export default function AdminPanel({
             const uploadData = await res.json();
             const urls: string[] = uploadData.urls || [];
             uploadedUrls.push(...urls);
-            console.log("Archivos restantes subidos mediante el fallback del API.");
+            console.log("[Fallback] Archivos sincronizados en servidor satisfactoriamente.");
           } else {
-            console.warn("Falló el endpoint de fallback.");
+            console.error("[Fallback Error] Falló respuesta del servidor en fallback.");
             if (uploadedUrls.length === 0) {
-              throw new Error("Tanto Firebase Storage como el API del servidor fallaron.");
+              throw new Error("No se pudo subir ningún archivo de catálogo en Firestore Storage ni en el servidor.");
             }
           }
-        } catch (apiErr) {
-          console.error("Error en fallback de subida:", apiErr);
+        } catch (apiErr: any) {
+          console.error("[Fallback Error] Error de comunicación durante fallback de subida:", apiErr);
           if (uploadedUrls.length === 0) {
-            throw new Error("No se pudo subir ningún archivo. Verifica la conexión.");
+            throw new Error(`Tanto Cloud Storage como el servidor de respaldo fallaron. (${apiErr.message || apiErr})`);
           }
         }
       }
 
+      // 4. Update state fields in form
       const newImages: string[] = [];
       let lastVideo = "";
 
@@ -386,7 +458,6 @@ export default function AdminPanel({
         }
       });
 
-      // Add to current image roster, filtering out blank fields
       setImagesList((prev) => {
         const cleaned = prev.filter((img) => img.trim() !== "");
         const combined = [...cleaned, ...newImages];
@@ -397,13 +468,14 @@ export default function AdminPanel({
         setVideoUrl(lastVideo);
       }
 
-      showToast(`¡Carga completada! Subidos ${uploadedUrls.length} archivo(s) con éxito.`);
+      showToast(`¡Carga completada! Subidos ${uploadedUrls.length} archivo(s) optimizado(s) con éxito.`);
     } catch (err: any) {
       console.error("Carga de archivos fallida: ", err);
-      setUploadError("Error en la carga rápida de archivos: " + (err.message || err));
+      setUploadError(err.message || String(err));
       showToast("Error al subir los medios", "error");
     } finally {
       setUploadingMedia(false);
+      setUploadProgressMsg("");
       e.target.value = "";
     }
   };
@@ -932,9 +1004,11 @@ export default function AdminPanel({
                 </div>
 
                 {uploadingMedia && (
-                  <div className="absolute inset-0 bg-white/95 rounded-2xl flex flex-col items-center justify-center z-20">
-                    <span className="w-8 h-8 rounded-full border-2 border-amber-500 border-t-transparent animate-spin inline-block mb-1" />
-                    <span className="text-[11px] font-bold text-amber-900 uppercase tracking-widest animate-pulse">Cargando Archivos...</span>
+                  <div className="absolute inset-0 bg-white/95 rounded-2xl flex flex-col items-center justify-center z-20 p-4 text-center">
+                    <span className="w-8 h-8 rounded-full border-2 border-amber-500 border-t-transparent animate-spin inline-block mb-2" />
+                    <span className="text-[11px] font-bold text-amber-900 uppercase tracking-widest animate-pulse max-w-full truncate">
+                      {uploadProgressMsg || "Cargando Archivos..."}
+                    </span>
                   </div>
                 )}
               </div>

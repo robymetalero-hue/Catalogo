@@ -21,6 +21,7 @@ import StoreFooter from "./components/StoreFooter";
 import ProductCard from "./components/ProductCard";
 import ProductDetailsModal from "./components/ProductDetailsModal";
 import AdminPanel from "./components/AdminPanel";
+import ShareCatalogModal from "./components/ShareCatalogModal";
 import { motion, AnimatePresence } from "motion/react";
 
 const INITIAL_STORE_CONFIG: StoreConfig = {
@@ -74,6 +75,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [shareToast, setShareToast] = useState<string | null>(null);
+  const [isShareOpen, setIsShareOpen] = useState(false);
 
   // Authentication & Admin states
   const [user, setUser] = useState<AdminUser | null>(() => {
@@ -509,38 +511,7 @@ export default function App() {
   };
 
   const handleShareCatalog = async () => {
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: storeConfig.storeName || "Catálogo de Productos",
-          text: `¡Hola! Te comparto aquí el catálogo de ${storeConfig.storeName || 'nuestra tienda'}. Descubre nuestros increíbles artículos y haz tus pedidos directo por WhatsApp:`,
-          url: window.location.href,
-        });
-      } catch (error: any) {
-        // Log as warning to prevent triggering error alerts in test beds or sandbox systems on cancellable user interaction.
-        console.warn("Share action was cancelled or failed:", error);
-        
-        // If the user cancelled, we do not need to spam copy alerts, but if it failed due to sandbox constraints (AllowedFramePermissions, etc)
-        // or other errors, let's gracefully copy the link to clipboard as a reliable fallback!
-        if (error && error.name !== "AbortError") {
-          try {
-            await navigator.clipboard.writeText(window.location.href);
-            setShareToast("¡Enlace copiado al portapapeles como respaldo!");
-            setTimeout(() => setShareToast(null), 3000);
-          } catch (clipErr) {
-            console.warn("Clipboard fallback also failed:", clipErr);
-          }
-        }
-      }
-    } else {
-      try {
-        await navigator.clipboard.writeText(window.location.href);
-        setShareToast("¡Enlace del catálogo copiado al portapapeles!");
-        setTimeout(() => setShareToast(null), 3000);
-      } catch (err) {
-        console.warn("No se pudo copiar el enlace:", err);
-      }
-    }
+    setIsShareOpen(true);
   };
 
   const handleAdminLogin = async () => {
@@ -784,6 +755,7 @@ export default function App() {
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
             onOpenLocation={handleOpenGoogleMaps}
+            onOpenShare={() => setIsShareOpen(true)}
           />
 
           <main className="flex-grow max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8 animate-fadeIn">
@@ -1061,6 +1033,12 @@ export default function App() {
           </div>
         )}
       </AnimatePresence>
+
+      <ShareCatalogModal
+        isOpen={isShareOpen}
+        onClose={() => setIsShareOpen(false)}
+        storeName={storeConfig.storeName || ""}
+      />
     </div>
   );
 }

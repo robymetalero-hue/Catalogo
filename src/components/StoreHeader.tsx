@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Store, Search, Filter, Sparkles, MapPin, Phone } from "lucide-react";
+import { Store, Search, Filter, Sparkles, MapPin, Phone, QrCode } from "lucide-react";
 import { StoreConfig } from "../types";
 import { motion } from "motion/react";
 
@@ -15,6 +15,7 @@ interface StoreHeaderProps {
   searchQuery: string;
   onSearchChange: (query: string) => void;
   onOpenLocation: () => void;
+  onOpenShare: () => void;
 }
 
 export default function StoreHeader({
@@ -25,6 +26,7 @@ export default function StoreHeader({
   searchQuery,
   onSearchChange,
   onOpenLocation,
+  onOpenShare,
 }: StoreHeaderProps) {
   return (
     <header className="w-full bg-white/95 border-b border-slate-100 sticky top-0 z-30 shadow-3xs backdrop-blur-md">
@@ -55,6 +57,13 @@ export default function StoreHeader({
                 <span className="line-clamp-1">{storeConfig.address}</span>
               </button>
             )}
+            <button 
+              onClick={onOpenShare}
+              className="hover:text-amber-600 transition-colors flex items-center gap-1.5 text-left select-none font-bold text-slate-600"
+            >
+              <QrCode size={11} className="text-amber-500 shrink-0" />
+              <span>Compartir QR</span>
+            </button>
           </div>
         </div>
 
