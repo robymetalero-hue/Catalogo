@@ -1384,27 +1384,27 @@ export default function AdminPanel({
                   </div>
                   <div className="space-y-1.5 flex-1 select-text">
                     <div className="flex flex-wrap items-center gap-2">
-                      <h4 className="font-semibold text-slate-800 text-sm">Base de Datos Google Cloud SQL (PostgreSQL)</h4>
+                      <h4 className="font-semibold text-slate-800 text-sm">Base de Datos Google Cloud Firestore (Serverless)</h4>
                       <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
                         diagnostics.database?.status === "success" 
                           ? "bg-emerald-100 text-emerald-800"
                           : "bg-rose-100 text-rose-800 animate-pulse"
                       }`}>
-                        {diagnostics.database?.status === "success" ? "Conectado ✅" : "Error de Conexión ❌"}
+                        {diagnostics.database?.status === "success" ? "Activo ✅" : "Error de Conexión ❌"}
                       </span>
                     </div>
 
                     {diagnostics.database?.status === "success" ? (
                       <p className="text-xs text-slate-500 leading-relaxed">
-                        ¡Excelente! El servidor se ha conectado exitosamente a la base de datos PostgreSQL. Las modificaciones que realices serán duraderas y visibles en tiempo real para todos los clientes en cualquier dispositivo.
+                        ¡Excelente! El servidor se ha conectado de forma automática y transparente a la base de datos de <strong>Google Cloud Firestore</strong> de manera serverless sin requerir configuración manual. Las modificaciones que realices serán duraderas y visibles en tiempo real para todos los clientes en cualquier dispositivo.
                       </p>
                     ) : (
                       <div className="space-y-2">
                         <p className="text-xs text-rose-700 font-medium">
-                          No se pudo conectar a la base de datos PostgreSQL. Esto explica por qué el catálogo se muestra vacío en otros dispositivos y tus cambios locales no logran subirse de forma global.
+                          No se pudo conectar a la base de datos Google Cloud Firestore. Revisa que esté provisionado Firestore en tu proyecto de Firebase.
                         </p>
                         <div className="bg-slate-900 text-slate-200 p-3 rounded-lg text-[11px] font-mono whitespace-pre-wrap overflow-x-auto border border-slate-800 max-h-32">
-                          <span className="text-rose-400">Detalle del Error devuelto por PostgreSQL:</span>
+                          <span className="text-rose-400">Detalle del Error devuelto por Firestore:</span>
                           {"\n"}{diagnostics.database?.error || "Fallo de conexión o tiempo de espera excedido (connection timeout)"}
                         </div>
                       </div>
@@ -1457,82 +1457,44 @@ export default function AdminPanel({
                 </div>
               </div>
 
-              {/* 3. Variables Ambientales de Cloud Run */}
+              {/* 3. Variables Ambientales de Cloud Run Simplificadas */}
               <div className="bg-slate-50 rounded-2xl p-4 md:p-5 border border-slate-150 space-y-4">
                 <div className="space-y-1">
                   <h4 className="text-sm font-semibold text-slate-800 flex items-center gap-1.5">
                     <Terminal size={15} className="text-slate-500" />
-                    <span>Control de Variables de Entorno en Google Cloud Run</span>
+                    <span>Soporte Zero-Configuration con Firestore</span>
                   </h4>
                   <p className="text-xs text-slate-500">
-                    Estas variables de entorno deben estar ingresadas en tu Consola de Google Cloud para que la aplicación funcione en tu dominio <strong className="text-slate-700">dstores.app</strong>:
+                    ¡Grandes noticias! Gracias a la migración total a <strong>Google Cloud Firestore (Serverless)</strong>, la base de datos se comunica de forma nativa a través del contexto de seguridad de la nube de Google Cloud Console.
                   </p>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+                <div className="bg-emerald-50 text-emerald-900 border border-emerald-150 rounded-xl p-3.5 space-y-2">
+                  <h5 className="font-bold text-xs">🎉 NO NECESITAS INGRESAR VARIABLES COMPLEJAS DE SQL:</h5>
+                  <p className="text-[11px] leading-relaxed">
+                    Las variables de entorno <code className="bg-emerald-100 px-1 text-emerald-950 font-mono rounded text-[10px]">SQL_HOST</code>, <code className="bg-emerald-100 px-1 text-emerald-950 font-mono rounded text-[10px]">SQL_USER</code>, <code className="bg-emerald-100 px-1 text-emerald-950 font-mono rounded text-[10px]">SQL_PASSWORD</code> y <code className="bg-emerald-100 px-1 text-emerald-950 font-mono rounded text-[10px]">SQL_DB_NAME</code> <strong>ya no son requeridas</strong> por tu sistema. Puedes eliminarlas o ignorarlas con total tranquilidad de tu panel de Cloud Run si lo deseas. ¡La base de datos Firestore funciona de forma 100% autogestionada, eliminando cualquier complicación de red o credenciales!
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 gap-2 mt-2">
                   <div className="bg-white p-2.5 rounded-lg border border-slate-150 flex items-center justify-between">
-                    <div>
-                      <span className="font-mono text-xs text-slate-800 font-semibold block">SQL_HOST</span>
-                      <span className="text-[10px] text-slate-400">IP / Socket de BD</span>
-                    </div>
-                    <span>{diagnostics.env?.SQL_HOST_set ? "✅ Cargado" : "❌ Falta agregar"}</span>
-                  </div>
-                  <div className="bg-white p-2.5 rounded-lg border border-slate-150 flex items-center justify-between">
-                    <div>
-                      <span className="font-mono text-xs text-slate-800 font-semibold block">SQL_USER</span>
-                      <span className="text-[10px] text-slate-400">Usuario PostgreSQL</span>
-                    </div>
-                    <span>{diagnostics.env?.SQL_USER_set ? "✅ Cargado" : "❌ Falta agregar"}</span>
-                  </div>
-                  <div className="bg-white p-2.5 rounded-lg border border-slate-150 flex items-center justify-between">
-                    <div>
-                      <span className="font-mono text-xs text-slate-800 font-semibold block">SQL_PASSWORD</span>
-                      <span className="text-[10px] text-slate-400">Contraseña de BD</span>
-                    </div>
-                    <span>{diagnostics.env?.SQL_PASSWORD_set ? "✅ Cargado" : "❌ Falta agregar"}</span>
-                  </div>
-                  <div className="bg-white p-2.5 rounded-lg border border-slate-150 flex items-center justify-between">
-                    <div>
-                      <span className="font-mono text-xs text-slate-800 font-semibold block">SQL_DB_NAME</span>
-                      <span className="text-[10px] text-slate-400">Nombre de BD</span>
-                    </div>
-                    <span>{diagnostics.env?.SQL_DB_NAME_set ? "✅ Cargado" : "❌ Falta agregar"}</span>
-                  </div>
-                  <div className="bg-white p-2.5 rounded-lg border border-slate-150 flex items-center justify-between sm:col-span-2">
                     <div>
                       <span className="font-mono text-xs text-slate-800 font-semibold block">GCS_BUCKET_NAME</span>
-                      <span className="text-[10px] text-slate-400">Bucket de almacenamiento de fotos (Opcional pero altamente recomendado)</span>
+                      <span className="text-[10px] text-slate-400">Bucket de almacenamiento de fotos (Única variable opcional sugerida para fotos persistentes si deseas usar GCS)</span>
                     </div>
-                    <span>{diagnostics.env?.GCS_BUCKET_NAME_set ? "✅ Cargado" : "⚠️ Opcional / Falta"}</span>
+                    <span>{diagnostics.env?.GCS_BUCKET_NAME_set ? "✅ Configurado" : "⚠️ Opcional / No Requerido"}</span>
                   </div>
                 </div>
 
-                {/* Paso a paso de Google Cloud Run */}
-                <div className="bg-amber-50/50 rounded-xl p-3.5 border border-amber-100 space-y-3">
+                {/* Paso a paso resumido */}
+                <div className="bg-amber-50/50 rounded-xl p-3.5 border border-amber-100 space-y-1">
                   <span className="font-bold text-amber-950 text-xs flex items-center gap-1">
                     <HelpCircle size={14} className="text-amber-600" />
-                    <span>Guía PASO A PASO para solucionar el problema en Google Cloud Run:</span>
+                    <span>¿Cómo funciona el dominio dstores.app?</span>
                   </span>
-                  <ol className="text-xs text-amber-900/95 space-y-2 pl-4 list-decimal leading-relaxed select-text">
-                    <li>
-                      Ingresa en tu panel de <a href="https://console.cloud.google.com" target="_blank" rel="noopener noreferrer" className="font-bold underline text-amber-950 hover:text-black">Google Cloud Console</a> y dirígete al servicio <strong className="text-amber-950">Cloud Run</strong>.
-                    </li>
-                    <li>
-                      Haz clic en el nombre de tu servicio que está respondiendo en tu dominio (ej. el servicio mapeado a <em className="not-italic font-semibold text-amber-950">dstores.app</em>).
-                    </li>
-                    <li>
-                      Presiona el botón <strong className="text-amber-950">EDITAR Y IMPLEMENTAR NUEVA REVISIÓN</strong> (Edit & Deploy New Revision) en la barra superior.
-                    </li>
-                    <li>
-                      Baja hasta la sección de pestañas y ve a la pestaña de <strong className="text-amber-950">Variables de Entorno</strong> (Variables & Secrets).
-                    </li>
-                    <li>
-                      Añade las variables faltantes (<code className="font-mono bg-amber-100 text-amber-950 px-1 py-0.5 rounded text-[10px]">SQL_HOST</code>, <code className="font-mono bg-amber-100 text-amber-950 px-1 py-0.5 rounded text-[10px]">SQL_USER</code>, <code className="font-mono bg-amber-100 text-amber-950 px-1 py-0.5 rounded text-[10px]">SQL_PASSWORD</code>, <code className="font-mono bg-amber-100 text-amber-950 px-1 py-0.5 rounded text-[10px]">SQL_DB_NAME</code>, e idealmente <code className="font-mono bg-amber-100 text-amber-950 px-1 py-0.5 rounded text-[10px]">GCS_BUCKET_NAME</code>) con los valores reales de tu base de datos y Storage Bucket.
-                    </li>
-                    <li>
-                      Haz clic en el botón inferior <strong className="text-amber-950">IMPLEMENTAR</strong> (Deploy). ¡Listo! Una vez que cargue la nueva revisión, tus fotos se guardarán de forma duradera y tus registros se sincronizarán para todos los dispositivos de tus clientes.
-                    </li>
-                  </ol>
+                  <p className="text-[11px] text-amber-900/95 leading-relaxed">
+                    Tu dominio y tu aplicación siguen respondiendo perfectamente en Google Cloud Run. La gran ventaja es que los productos y la configuración general se guardan instantáneamente en Firestore, haciendo el proceso infinitamente más fácil sin código ni bases de datos complicadas. No requieres configuraciones complejas para que funcione de forma óptima.
+                  </p>
                 </div>
               </div>
             </div>

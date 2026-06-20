@@ -4,9 +4,28 @@ import fs from "fs";
 import multer from "multer";
 import { createServer as createViteServer } from "vite";
 import { Storage } from "@google-cloud/storage";
-import { db, withDBRetry } from "./src/db/index.ts";
-import { products, storeConfig } from "./src/db/schema.ts";
-import { eq, desc } from "drizzle-orm";
+import admin from "firebase-admin";
+import { getFirestore, Firestore } from "firebase-admin/firestore";
+
+// Load configuration from firebase-applet-config.json safely
+const firebaseConfig = JSON.parse(
+  fs.readFileSync(path.join(process.cwd(), "firebase-applet-config.json"), "utf8")
+);
+
+let firestoreDb: Firestore;
+try {
+  admin.initializeApp({
+    projectId: firebaseConfig.projectId,
+  });
+  // If a specific databaseId is set in the configuration, getFirestore uses it. Otherwise defaults.
+  firestoreDb = firebaseConfig.firestoreDatabaseId 
+    ? getFirestore(firebaseConfig.firestoreDatabaseId)
+    : getFirestore();
+  console.log(`[Firebase] Firestore activo habilitado para el proyecto: "${firebaseConfig.projectId}" y base de datos: "${firebaseConfig.firestoreDatabaseId || '(default)'}"`);
+} catch (fbInitErr: any) {
+  console.warn("[Firebase] No se pudo inicializar firebase-admin:", fbInitErr.message || fbInitErr);
+  firestoreDb = getFirestore();
+}
 
 async function startServer() {
   const app = express();
@@ -100,7 +119,12 @@ async function startServer() {
           return;
         }
       } catch (gcsReadErr: any) {
-        console.warn(`[Google Cloud] Error intentando transmitir "${filename}" desde GCS:`, gcsReadErr.message || gcsReadErr);
+        const msg = gcsReadErr.message || String(gcsReadErr);
+        if (gcsReadErr.code === 403 || msg.toLowerCase().includes("permission") || msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("does not have")) {
+          console.warn(`[GCS Config] Cuenta de servicio sin acceso para leer "${filename}" en el bucket GCS. Requiere rol 'Storage Object Admin'.`);
+        } else {
+          console.warn(`[GCS] No se pudo leer "${filename}":`, msg);
+        }
       }
     }
 
@@ -169,7 +193,12 @@ async function startServer() {
               console.warn("Fallo temporal limpiando archivo local:", unlinkErr);
             }
           } catch (gcsUploadErr: any) {
-            console.warn(`[Google Cloud] Desvío de emergencia cargando a GCS (usando almacenamiento local): ${gcsUploadErr.message || gcsUploadErr}`);
+            const msg = gcsUploadErr.message || String(gcsUploadErr);
+            if (gcsUploadErr.code === 403 || msg.toLowerCase().includes("permission") || msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("does not have")) {
+              console.warn(`[GCS Config] Cuenta de servicio sin acceso para subir "${file.filename}". Requiere rol 'Storage Object Admin'.`);
+            } else {
+              console.warn(`[GCS] Fallo al subir a GCS:`, msg);
+            }
             // Fallback to local URL if GCS fails or times out to avoid breaking user workflows
             urls.push(`/uploads/${file.filename}`);
           }
@@ -186,26 +215,24 @@ async function startServer() {
     }
   });
 
-  // --- ENDPOINT DE DIAGNÓSTICO DE LA NUBE (Google Cloud Run / SQL / GCS) ---
+  // --- ENDPOINT DE DIAGNÓSTICO DE LA NUBE (Google Cloud Run / Firestore / GCS) ---
   app.get("/api/diagnostics", async (req, res) => {
     const diagnostics: any = {
-      database: { status: "not_tested", error: null, host: process.env.SQL_HOST || null, database: process.env.SQL_DB_NAME || null },
+      database: { 
+        status: "not_tested", 
+        error: null, 
+        provider: "Google Cloud Firestore (Serverless)", 
+        database: firebaseConfig.firestoreDatabaseId 
+      },
       storage: { status: "not_tested", provider: "Local (Móvil/Temporal)", bucketName: process.env.GCS_BUCKET_NAME || null, warning: null, uploadDir },
       env: {
-        SQL_HOST_set: !!process.env.SQL_HOST,
-        SQL_USER_set: !!process.env.SQL_USER,
-        SQL_PASSWORD_set: !!process.env.SQL_PASSWORD,
-        SQL_DB_NAME_set: !!process.env.SQL_DB_NAME,
         GCS_BUCKET_NAME_set: !!process.env.GCS_BUCKET_NAME
       }
     };
 
-    // 1. Test Drizzle/PostgreSQL Connection
+    // 1. Test Firestore Connection
     try {
-      await withDBRetry(async () => {
-        // Simple light query
-        await db.select().from(storeConfig).limit(1);
-      });
+      await firestoreDb.collection("storeConfig").doc("default").get();
       diagnostics.database.status = "success";
     } catch (dbErr: any) {
       diagnostics.database.status = "error";
@@ -226,7 +253,12 @@ async function startServer() {
       } catch (gcsErr: any) {
         diagnostics.storage.status = "error";
         diagnostics.storage.provider = "Google Cloud Storage (Fallo)";
-        diagnostics.storage.warning = `Error de GCS: ${gcsErr.message || gcsErr}`;
+        const msg = gcsErr.message || String(gcsErr);
+        if (gcsErr.code === 403 || msg.toLowerCase().includes("permission") || msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("does not have")) {
+          diagnostics.storage.warning = `La cuenta de servicio del contenedor no tiene permisos para acceder al bucket GCS. Para solucionarlo, otórgale el rol 'Storage Object Admin' en la consola de Google Cloud.`;
+        } else {
+          diagnostics.storage.warning = `Error de GCS: ${msg}`;
+        }
       }
     } else {
       diagnostics.storage.status = "warning";
@@ -237,13 +269,14 @@ async function startServer() {
     return res.json(diagnostics);
   });
 
-  // --- API DE TIENDA Y CONFIGURACIÓN ---
+  // --- API DE TIENDA Y CONFIGURACIÓN EN FIRESTORE ---
   
   // Obtener configuración de la tienda
   app.get("/api/store-config", async (req, res) => {
     try {
-      const config = await withDBRetry(() => db.select().from(storeConfig).where(eq(storeConfig.id, "default")).limit(1));
-      if (config.length === 0) {
+      const docRef = firestoreDb.collection("storeConfig").doc("default");
+      const docSnap = await docRef.get();
+      if (!docSnap.exists) {
         // Sembrar valores por defecto si no existen
         const defaultDoc = {
           id: "default",
@@ -254,15 +287,15 @@ async function startServer() {
           whatsappCustomMessage: "Hola, me interesa este producto: {name} ({sku}) - {price}",
           locationUrl: "",
           showPrices: true,
-          updatedAt: new Date()
+          updatedAt: new Date().toISOString()
         };
-        const inserted = await withDBRetry(() => db.insert(storeConfig).values(defaultDoc).returning());
-        return res.json(inserted[0]);
+        await docRef.set(defaultDoc);
+        return res.json(defaultDoc);
       }
-      return res.json(config[0]);
+      return res.json({ id: "default", ...docSnap.data() });
     } catch (error: any) {
-      console.error("Error cargando el store-config:", error);
-      return res.status(500).json({ error: "Error de base de datos cargando configuración de la tienda: " + (error.message || error) });
+      console.error("Error cargando el store-config desde Firestore:", error);
+      return res.status(500).json({ error: "Error de Firestore cargando configuración de la tienda: " + (error.message || error) });
     }
   });
 
@@ -270,7 +303,8 @@ async function startServer() {
   app.post("/api/store-config", async (req, res) => {
     try {
       const payload = req.body;
-      const updated = await withDBRetry(() => db.insert(storeConfig).values({
+      const docRef = firestoreDb.collection("storeConfig").doc("default");
+      const data = {
         id: "default",
         storeName: payload.storeName || "Mi Catálogo de WhatsApp",
         address: payload.address || "",
@@ -279,35 +313,25 @@ async function startServer() {
         whatsappCustomMessage: payload.whatsappCustomMessage || "Hola, me interesa este producto: {name} ({sku}) - {price}",
         locationUrl: payload.locationUrl || "",
         showPrices: payload.showPrices ?? true,
-        updatedAt: new Date()
-      }).onConflictDoUpdate({
-        target: storeConfig.id,
-        set: {
-          storeName: payload.storeName || "Mi Catálogo de WhatsApp",
-          address: payload.address || "",
-          phone: payload.phone || "",
-          whatsappNumber: payload.whatsappNumber || "",
-          whatsappCustomMessage: payload.whatsappCustomMessage || "Hola, me interesa este producto: {name} ({sku}) - {price}",
-          locationUrl: payload.locationUrl || "",
-          showPrices: payload.showPrices ?? true,
-          updatedAt: new Date()
-        }
-      }).returning());
-      return res.json(updated[0]);
+        updatedAt: new Date().toISOString()
+      };
+      await docRef.set(data, { merge: true });
+      return res.json(data);
     } catch (error: any) {
-      console.error("Error actualizando store-config:", error);
-      return res.status(500).json({ error: "Error de base de datos actualizando configuración de la tienda: " + (error.message || error) });
+      console.error("Error actualizando store-config en Firestore:", error);
+      return res.status(500).json({ error: "Error de Firestore actualizando configuración de la tienda: " + (error.message || error) });
     }
   });
 
   // Obtener todos los productos
   app.get("/api/products", async (req, res) => {
     try {
-      const allProducts = await withDBRetry(() => db.select().from(products).orderBy(desc(products.createdAt)));
+      const snapshot = await firestoreDb.collection("products").orderBy("createdAt", "desc").get();
+      const allProducts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       return res.json(allProducts);
     } catch (error: any) {
-      console.error("Error obteniendo productos:", error);
-      return res.status(500).json({ error: "Error de base de datos obteniendo lista de productos: " + (error.message || error) });
+      console.error("Error obteniendo productos de Firestore:", error);
+      return res.status(500).json({ error: "Error de Firestore obteniendo lista de productos: " + (error.message || error) });
     }
   });
 
@@ -316,8 +340,7 @@ async function startServer() {
     try {
       const p = req.body;
       const id = p.id || `prod_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      const result = await withDBRetry(() => db.insert(products).values({
-        id,
+      const docData = {
         sku: p.sku || "",
         name: p.name || "Sin nombre",
         description: p.description || "",
@@ -327,15 +350,16 @@ async function startServer() {
         images: p.images || [],
         videoUrl: p.videoUrl || "",
         isAvailable: p.isAvailable ?? true,
-        views: p.views || 0,
-        whatsappClicks: p.whatsappClicks || 0,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }).returning());
-      return res.json(result[0]);
+        views: Number(p.views) || 0,
+        whatsappClicks: Number(p.whatsappClicks) || 0,
+        createdAt: p.createdAt ? new Date(p.createdAt).toISOString() : new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      await firestoreDb.collection("products").doc(id).set(docData);
+      return res.json({ id, ...docData });
     } catch (error: any) {
-      console.error("Error creando producto:", error);
-      return res.status(500).json({ error: "Error de base de datos creando producto: " + (error.message || error) });
+      console.error("Error creando producto en Firestore:", error);
+      return res.status(500).json({ error: "Error de Firestore creando producto: " + (error.message || error) });
     }
   });
 
@@ -344,28 +368,34 @@ async function startServer() {
     try {
       const { id } = req.params;
       const p = req.body;
-      const result = await withDBRetry(() => db.update(products).set({
-        sku: p.sku,
-        name: p.name,
-        description: p.description,
-        category: p.category,
-        retailPrice: p.retailPrice !== undefined ? (Number(p.retailPrice) || 0) : undefined,
-        wholesalePrice: p.wholesalePrice !== undefined ? (Number(p.wholesalePrice) || 0) : undefined,
-        images: p.images,
-        videoUrl: p.videoUrl,
-        isAvailable: p.isAvailable,
-        views: p.views,
-        whatsappClicks: p.whatsappClicks,
-        updatedAt: new Date(),
-      }).where(eq(products.id, id)).returning());
+      const docRef = firestoreDb.collection("products").doc(id);
+      const docSnap = await docRef.get();
       
-      if (result.length === 0) {
+      if (!docSnap.exists) {
         return res.status(404).json({ error: "Producto no encontrado." });
       }
-      return res.json(result[0]);
+
+      const updateData: any = {};
+      if (p.sku !== undefined) updateData.sku = p.sku;
+      if (p.name !== undefined) updateData.name = p.name;
+      if (p.description !== undefined) updateData.description = p.description;
+      if (p.category !== undefined) updateData.category = p.category;
+      if (p.retailPrice !== undefined) updateData.retailPrice = Number(p.retailPrice) || 0;
+      if (p.wholesalePrice !== undefined) updateData.wholesalePrice = Number(p.wholesalePrice) || 0;
+      if (p.images !== undefined) updateData.images = p.images;
+      if (p.videoUrl !== undefined) updateData.videoUrl = p.videoUrl;
+      if (p.isAvailable !== undefined) updateData.isAvailable = p.isAvailable;
+      if (p.views !== undefined) updateData.views = Number(p.views) || 0;
+      if (p.whatsappClicks !== undefined) updateData.whatsappClicks = Number(p.whatsappClicks) || 0;
+      updateData.updatedAt = new Date().toISOString();
+
+      await docRef.update(updateData);
+      
+      const freshSnap = await docRef.get();
+      return res.json({ id, ...freshSnap.data() });
     } catch (error: any) {
-      console.error("Error actualizando producto:", error);
-      return res.status(500).json({ error: "Error de base de datos actualizando producto: " + (error.message || error) });
+      console.error("Error actualizando producto en Firestore:", error);
+      return res.status(500).json({ error: "Error de Firestore actualizando producto: " + (error.message || error) });
     }
   });
 
@@ -373,28 +403,32 @@ async function startServer() {
   app.delete("/api/products/:id", async (req, res) => {
     try {
       const { id } = req.params;
-      const result = await withDBRetry(() => db.delete(products).where(eq(products.id, id)).returning());
-      if (result.length === 0) {
-        return res.status(404).json({ error: "Producto no encontrado." });
+      const docRef = firestoreDb.collection("products").doc(id);
+      const docSnap = await docRef.get();
+      if (!docSnap.exists) {
+        return res.status(404).json({ error: "Producto no encontrado en Firestore." });
       }
+      await docRef.delete();
       return res.json({ success: true });
     } catch (error: any) {
-      console.error("Error eliminando producto:", error);
-      return res.status(500).json({ error: "Error de base de datos eliminando producto: " + (error.message || error) });
+      console.error("Error eliminando producto de Firestore:", error);
+      return res.status(500).json({ error: "Error de Firestore eliminando producto: " + (error.message || error) });
     }
   });
 
   // Sembrar en lote productos de demostración con validaciones ultra-robustas y logs detallados
   app.post("/api/products/seed", async (req, res) => {
-    console.log(`[SQL Sync] Recibida petición de siembra con lote. Tamaño: ${Array.isArray(req.body) ? req.body.length : "no es arreglo"}`);
+    console.log(`[Firestore Sync] Recibida petición de siembra con lote. Tamaño: ${Array.isArray(req.body) ? req.body.length : "no es arreglo"}`);
     try {
       const list = req.body;
       if (!Array.isArray(list)) {
-        console.warn("[SQL Sync] Error: El cuerpo de la petición no es un arreglo.");
+        console.warn("[Firestore Sync] Error: El cuerpo de la petición no es un arreglo.");
         return res.status(400).json({ error: "Se requiere un arreglo de productos." });
       }
       
       const inserted = [];
+      const batch = firestoreDb.batch();
+      
       for (const p of list) {
         const id = p.id || `prod_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
         const retailNum = typeof p.retailPrice === "number" ? p.retailPrice : parseFloat(p.retailPrice);
@@ -403,10 +437,10 @@ async function startServer() {
         const finalRetail = isNaN(retailNum) ? 0 : retailNum;
         const finalWholesale = isNaN(wholesaleNum) ? 0 : wholesaleNum;
 
-        console.log(`[SQL Sync] Sembrando producto ID: "${id}", SKU: "${p.sku}", Nombre: "${p.name}"`);
+        console.log(`[Firestore Sync] Sembrando producto ID: "${id}", SKU: "${p.sku}", Nombre: "${p.name}"`);
 
-        const row = await withDBRetry(() => db.insert(products).values({
-          id,
+        const docRef = firestoreDb.collection("products").doc(id);
+        const docData = {
           sku: p.sku || "",
           name: p.name || "Sin nombre",
           description: p.description || "",
@@ -416,34 +450,23 @@ async function startServer() {
           images: p.images || [],
           videoUrl: p.videoUrl || "",
           isAvailable: p.isAvailable ?? true,
-          views: p.views || 0,
-          whatsappClicks: p.whatsappClicks || 0,
-          createdAt: p.createdAt ? new Date(p.createdAt) : new Date(),
-          updatedAt: new Date(),
-        }).onConflictDoUpdate({
-          target: products.id,
-          set: {
-            sku: p.sku || "",
-            name: p.name || "Sin nombre",
-            description: p.description || "",
-            category: p.category || "General",
-            retailPrice: finalRetail,
-            wholesalePrice: finalWholesale,
-            images: p.images || [],
-            videoUrl: p.videoUrl || "",
-            isAvailable: p.isAvailable ?? true,
-            updatedAt: new Date(),
-          }
-        }).returning());
+          views: Number(p.views) || 0,
+          whatsappClicks: Number(p.whatsappClicks) || 0,
+          createdAt: p.createdAt ? new Date(p.createdAt).toISOString() : new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
         
-        inserted.push(row[0]);
+        batch.set(docRef, docData, { merge: true });
+        inserted.push({ id, ...docData });
       }
-      console.log(`[SQL Sync] Éxito. Se guardaron correctamente ${inserted.length} artículos en PostgreSQL.`);
+      
+      await batch.commit();
+      console.log(`[Firestore Sync] Éxito. Se guardaron correctamente ${inserted.length} artículos en Firestore.`);
       return res.json(inserted);
     } catch (error: any) {
-      console.error("[SQL Sync] Error crítico sembrando productos:", error);
+      console.error("[Firestore Sync] Error crítico sembrando productos:", error);
       return res.status(500).json({ 
-        error: "Error de base de datos sembrando productos: " + (error.message || error),
+        error: "Error de Firestore sembrando productos: " + (error.message || error),
         details: error.stack || ""
       });
     }
