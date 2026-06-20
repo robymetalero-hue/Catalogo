@@ -5,13 +5,7 @@
 
 import React, { useState, useEffect } from "react";
 import { Product, StoreConfig } from "../types";
-import { db, OperationType, handleFirestoreError, storage } from "../firebase";
-import { 
-  collection, doc, setDoc, deleteDoc, updateDoc
-} from "firebase/firestore";
-import { 
-  ref, uploadBytes, getDownloadURL, uploadBytesResumable 
-} from "firebase/storage";
+// No longer importing Firebase Storage or Firestore database modules as we use PostgreSQL Google Cloud SQL and standard media server endpoints.
 import { 
   Store, Plus, Edit2, Trash2, Save, X, Eye, EyeOff, Video, Link, Check, Image as ImageIcon, Sparkles, FolderPlus, Phone, TrendingUp, ThumbsUp, BarChart2, Upload, CloudUpload, RefreshCw
 } from "lucide-react";
@@ -247,49 +241,6 @@ export default function AdminPanel({
         resolve(file);
       };
       reader.readAsDataURL(file);
-    });
-  };
-
-  // Core Helper: Direct Upload to Firebase Storage with strict time-limits and live percentage state callbacks
-  const uploadToStorageWithProgress = (
-    file: File, 
-    onProgress: (percent: number) => void,
-    timeoutMs: number = 25000 // 25s timeout limit per file for massive bandwidths
-  ): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const uniqueId = `${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
-      const cleanName = file.name.replace(/[^a-zA-Z0-9.\-_]/g, "_");
-      const fileRef = ref(storage, `catalog/${uniqueId}_${cleanName}`);
-      
-      const uploadTask = uploadBytesResumable(fileRef, file);
-      
-      const timer = setTimeout(() => {
-        uploadTask.cancel();
-        reject(new Error("Timeout de subida superado en Firebase Storage"));
-      }, timeoutMs);
-      
-      uploadTask.on(
-        "state_changed", 
-        (snapshot) => {
-          const progress = snapshot.totalBytes > 0 
-            ? Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100) 
-            : 0;
-          onProgress(progress);
-        }, 
-        (error) => {
-          clearTimeout(timer);
-          reject(error);
-        }, 
-        async () => {
-          clearTimeout(timer);
-          try {
-            const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-            resolve(downloadURL);
-          } catch (err) {
-            reject(err);
-          }
-        }
-      );
     });
   };
 

@@ -5,10 +5,7 @@
 
 import React, { useState, useEffect } from "react";
 import { Product, StoreConfig, AdminUser } from "./types";
-import { db, auth, OperationType, handleFirestoreError } from "./firebase";
-import { 
-  collection, query, getDocs, onSnapshot, doc, setDoc, orderBy, updateDoc, increment, getDoc, getDocFromServer, Timestamp 
-} from "firebase/firestore";
+import { auth } from "./firebase";
 import { 
   signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged,
   signInWithEmailAndPassword, createUserWithEmailAndPassword
