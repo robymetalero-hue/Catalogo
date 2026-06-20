@@ -298,7 +298,6 @@ export default function AdminPanel({
     setUploadError("");
 
     try {
-      const formData = new FormData();
       const filesArray = Array.from(files) as File[];
 
       // Compress and process all selected images in parallel before sending to server
@@ -313,33 +312,73 @@ export default function AdminPanel({
         })
       );
 
+      const uploadedUrls: string[] = [];
+      const failedToStorageFiles: File[] = [];
+
+      // Try uploading to Firebase Storage first (prefer durable cloud storage)
       for (const file of processedFiles) {
-        formData.append("files", file);
+        try {
+          const uniqueId = `${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
+          // Clean file name to avoid path traversal or illegal characters
+          const cleanName = file.name.replace(/[^a-zA-Z0-9.\-_]/g, "_");
+          const fileRef = ref(storage, `catalog/${uniqueId}_${cleanName}`);
+          
+          await uploadBytes(fileRef, file);
+          const url = await getDownloadURL(fileRef);
+          
+          if (url) {
+            uploadedUrls.push(url);
+            console.log(`Foto/Video subido exitosamente a Firebase Storage: ${url}`);
+          }
+        } catch (storageErr) {
+          console.warn(`Direct Firebase Storage falló para ${file.name}, intentando fallback a API del servidor:`, storageErr);
+          failedToStorageFiles.push(file);
+        }
       }
 
-      // Upload via backend Express API endpoint
-      const res = await fetch("/api/upload", {
-        method: "POST",
-        body: formData,
-      });
+      // If any files failed direct Firebase Storage upload, try backend Express API endpoint fallback
+      if (failedToStorageFiles.length > 0) {
+        try {
+          const formData = new FormData();
+          for (const file of failedToStorageFiles) {
+            formData.append("files", file);
+          }
+          
+          const res = await fetch("/api/upload", {
+            method: "POST",
+            body: formData,
+          });
 
-      if (!res.ok) {
-        throw new Error("La respuesta del backend falló durante la subida.");
+          if (res.ok) {
+            const uploadData = await res.json();
+            const urls: string[] = uploadData.urls || [];
+            uploadedUrls.push(...urls);
+            console.log("Archivos restantes subidos mediante el fallback del API.");
+          } else {
+            console.warn("Falló el endpoint de fallback.");
+            if (uploadedUrls.length === 0) {
+              throw new Error("Tanto Firebase Storage como el API del servidor fallaron.");
+            }
+          }
+        } catch (apiErr) {
+          console.error("Error en fallback de subida:", apiErr);
+          if (uploadedUrls.length === 0) {
+            throw new Error("No se pudo subir ningún archivo. Verifica la conexión.");
+          }
+        }
       }
-
-      const uploadData = await res.json();
-      const urls: string[] = uploadData.urls || [];
 
       const newImages: string[] = [];
       let lastVideo = "";
 
-      urls.forEach((url) => {
+      uploadedUrls.forEach((url) => {
         const lowerUrl = url.toLowerCase();
         if (
-          lowerUrl.endsWith(".mp4") ||
-          lowerUrl.endsWith(".webm") ||
-          lowerUrl.endsWith(".mov") ||
-          lowerUrl.endsWith(".avi")
+          lowerUrl.includes(".mp4") ||
+          lowerUrl.includes(".webm") ||
+          lowerUrl.includes(".mov") ||
+          lowerUrl.includes(".avi") ||
+          lowerUrl.includes("video")
         ) {
           lastVideo = url;
         } else {
@@ -358,14 +397,13 @@ export default function AdminPanel({
         setVideoUrl(lastVideo);
       }
 
-      showToast(`¡Carga completada! Subidos ${urls.length} archivo(s) optimizado(s) con éxito.`);
+      showToast(`¡Carga completada! Subidos ${uploadedUrls.length} archivo(s) con éxito.`);
     } catch (err: any) {
       console.error("Carga de archivos fallida: ", err);
-      setUploadError("Error en la carga rápida. El archivo puede ser demasiado grande o no compatible.");
+      setUploadError("Error en la carga rápida de archivos: " + (err.message || err));
       showToast("Error al subir los medios", "error");
     } finally {
       setUploadingMedia(false);
-      // Allow re-upload of the same files if needed
       e.target.value = "";
     }
   };
@@ -394,38 +432,38 @@ export default function AdminPanel({
     } catch (err) {}
 
     try {
-      // 1. Dual Write: Save config directly to Firestore Cloud (100% reliable)
+      // 1. Primary Write: Save config directly to Firestore Cloud (100% reliable)
+      const configDocRef = doc(db, "storeConfig", "default");
+      await setDoc(configDocRef, {
+        storeName: storeName.trim(),
+        address: address.trim(),
+        phone: phone.trim(),
+        whatsappNumber: whatsappNumber.trim().replace(/[^0-9]/g, ""),
+        whatsappCustomMessage: whatsappCustomMessage.trim(),
+        locationUrl: locationUrl.trim(),
+        showPrices: !!showPrices,
+        updatedAt: new Date()
+      });
+      console.log("Configuración de tienda guardada exitosamente en Firestore Cloud!");
+
+      // 2. Secondary Write: Quietly notify the PostgreSQL container backend if active
       try {
-        const configDocRef = doc(db, "storeConfig", "default");
-        await setDoc(configDocRef, {
-          storeName: storeName.trim(),
-          address: address.trim(),
-          phone: phone.trim(),
-          whatsappNumber: whatsappNumber.trim().replace(/[^0-9]/g, ""),
-          whatsappCustomMessage: whatsappCustomMessage.trim(),
-          locationUrl: locationUrl.trim(),
-          showPrices: !!showPrices,
-          updatedAt: new Date()
+        const res = await fetch("/api/store-config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updatedData)
         });
-        console.log("Configuración de tienda guardada exitosamente en Firestore Cloud!");
-      } catch (fsErr) {
-        console.warn("No se pudo guardar la configuración en Firestore, continuando con Postgres...", fsErr);
+        if (!res.ok) {
+          console.warn("PostgreSQL backend did not accept save request (expected if on static hosting)");
+        }
+      } catch (pgErr) {
+        console.warn("No se pudo sincronizar la configuración en Postgres (servidor apagado o static hosting):", pgErr);
       }
 
-      // 2. Existing PostgreSQL calls
-      const res = await fetch("/api/store-config", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updatedData)
-      });
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || "Fallo en la llamada API a Google Cloud PostgreSQL");
-      }
-      showToast("Configuración general guardada exitosamente en Google Cloud SQL y Firestore Cloud");
+      showToast("Configuración general guardada exitosamente en Firestore Cloud");
       onRefreshConfig(); // Sincroniza la información real desde la BD
     } catch (error: any) {
-      console.error("Could not save config to Google Cloud SQL:", error);
+      console.error("Could not save config to Firestore:", error);
       showToast(`Error al guardar configuración: ${error.message || error}`, "error");
     } finally {
       setLoading(false);
@@ -566,90 +604,83 @@ export default function AdminPanel({
     setIsEditingProduct(false);
 
     try {
-      // 1. Dual Write: Save product directly to Firestore (bulletproof cloud database)
+      // 1. Primary Write: Save product directly to Firestore (bulletproof cloud database)
+      const firestoreProductPath = doc(db, "products", id);
+      const fsProductObj = {
+        id,
+        sku: sku.trim(),
+        name: name.trim(),
+        description: description.trim(),
+        category: finalCategory || "Otros",
+        retailPrice: Number(retailPrice) || 0,
+        wholesalePrice: Number(wholesalePrice) || 0,
+        images: filteredImages,
+        videoUrl: videoUrl.trim(),
+        isAvailable: !!isAvailable,
+        createdAt: editingProductId 
+          ? (products.find(p => p.id === id)?.createdAt 
+              ? new Date(products.find(p => p.id === id)!.createdAt) 
+              : currentTime) 
+          : currentTime,
+        updatedAt: currentTime,
+        views: editingProductId ? (products.find(p => p.id === id)?.views || 0) : 0,
+        whatsappClicks: editingProductId ? (products.find(p => p.id === id)?.whatsappClicks || 0) : 0
+      };
+      await setDoc(firestoreProductPath, fsProductObj);
+      console.log("Producto guardado exitosamente en Firestore Cloud!");
+
+      // 2. Secondary Write: PostgreSQL quiet sync (expected to gracefully fail on static hostings like Firebase Hosting)
       try {
-        const firestoreProductPath = doc(db, "products", id);
-        const fsProductObj = {
-          id,
-          sku: sku.trim(),
-          name: name.trim(),
-          description: description.trim(),
-          category: finalCategory || "Otros",
-          retailPrice: Number(retailPrice) || 0,
-          wholesalePrice: Number(wholesalePrice) || 0,
-          images: filteredImages,
-          videoUrl: videoUrl.trim(),
-          isAvailable: !!isAvailable,
-          createdAt: editingProductId 
-            ? (products.find(p => p.id === id)?.createdAt 
-                ? new Date(products.find(p => p.id === id)!.createdAt) 
-                : currentTime) 
-            : currentTime,
-          updatedAt: currentTime,
-          views: editingProductId ? (products.find(p => p.id === id)?.views || 0) : 0,
-          whatsappClicks: editingProductId ? (products.find(p => p.id === id)?.whatsappClicks || 0) : 0
-        };
-        await setDoc(firestoreProductPath, fsProductObj);
-        console.log("Producto guardado exitosamente en Firestore Cloud!");
-      } catch (fsErr) {
-        console.warn("No se pudo guardar en Firestore Cloud, continuando con PostgreSQL...", fsErr);
+        if (editingProductId) {
+          const reqObj = {
+            sku: sku.trim(),
+            name: name.trim(),
+            description: description.trim(),
+            category: finalCategory || "Otros",
+            retailPrice: Number(retailPrice) || 0,
+            wholesalePrice: Number(wholesalePrice) || 0,
+            images: filteredImages,
+            videoUrl: videoUrl.trim(),
+            isAvailable: !!isAvailable,
+            updatedAt: currentTime
+          };
+          await fetch(`/api/products/${editingProductId}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(reqObj)
+          });
+        } else {
+          const reqObj = {
+            id,
+            sku: sku.trim(),
+            name: name.trim(),
+            description: description.trim(),
+            category: finalCategory || "Otros",
+            retailPrice: Number(retailPrice) || 0,
+            wholesalePrice: Number(wholesalePrice) || 0,
+            images: filteredImages,
+            videoUrl: videoUrl.trim(),
+            isAvailable: !!isAvailable,
+            createdAt: currentTime,
+            updatedAt: currentTime,
+            views: 0,
+            whatsappClicks: 0
+          };
+          await fetch("/api/products", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(reqObj)
+          });
+        }
+      } catch (pgErr) {
+        console.warn("No se pudo sincronizar producto con Postgres (servidor inactivo o static hosting):", pgErr);
       }
 
-      // 2. Standard Cloud SQL (PostgreSQL) operations
-      if (editingProductId) {
-        const reqObj = {
-          sku: sku.trim(),
-          name: name.trim(),
-          description: description.trim(),
-          category: finalCategory || "Otros",
-          retailPrice: Number(retailPrice) || 0,
-          wholesalePrice: Number(wholesalePrice) || 0,
-          images: filteredImages,
-          videoUrl: videoUrl.trim(),
-          isAvailable: !!isAvailable,
-          updatedAt: currentTime
-        };
-        const res = await fetch(`/api/products/${editingProductId}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(reqObj)
-        });
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.error || "Fallo en la llamada API PostgreSQL al editar");
-        }
-      } else {
-        const reqObj = {
-          id,
-          sku: sku.trim(),
-          name: name.trim(),
-          description: description.trim(),
-          category: finalCategory || "Otros",
-          retailPrice: Number(retailPrice) || 0,
-          wholesalePrice: Number(wholesalePrice) || 0,
-          images: filteredImages,
-          videoUrl: videoUrl.trim(),
-          isAvailable: !!isAvailable,
-          createdAt: currentTime,
-          updatedAt: currentTime,
-          views: 0,
-          whatsappClicks: 0
-        };
-        const res = await fetch("/api/products", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(reqObj)
-        });
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.error || "Fallo en la llamada API PostgreSQL al crear");
-        }
-      }
       showToast(savedMsg);
-      onRefreshProducts(); // Sincroniza productos y categorías reales desde Cloud SQL
+      onRefreshProducts(); // Sincroniza localmente
     } catch (error: any) {
-      console.error("Could not sync product edit with Cloud SQL:", error);
-      showToast(`Error al guardar producto: ${error.message || error}`, "error");
+      console.error("Could not write product to Firestore Cloud:", error);
+      showToast(`Error al guardar producto en base de datos: ${error.message || error}`, "error");
     } finally {
       setLoading(false);
     }
@@ -669,28 +700,25 @@ export default function AdminPanel({
     } catch (e) {}
 
     try {
-      // 1. Dual Delete: Remove product directly from Firestore
+      // 1. Primary Delete: Remove product directly from Firestore
+      const firestoreProductPath = doc(db, "products", id);
+      await deleteDoc(firestoreProductPath);
+      console.log("Producto eliminado de Firestore Cloud!");
+
+      // 2. Secondary Delete: Quietly request deleting from Postgres backend
       try {
-        const firestoreProductPath = doc(db, "products", id);
-        await deleteDoc(firestoreProductPath);
-        console.log("Producto eliminado de Firestore Cloud!");
-      } catch (fsErr) {
-        console.warn("No se pudo eliminar en Firestore Cloud, continuando con PostgreSQL...", fsErr);
+        await fetch(`/api/products/${id}`, {
+          method: "DELETE"
+        });
+      } catch (pgErr) {
+        console.warn("No se pudo eliminar en Postgres (servidor inactivo o static hosting):", pgErr);
       }
 
-      // 2. Standard Cloud SQL (PostgreSQL) operations
-      const res = await fetch(`/api/products/${id}`, {
-        method: "DELETE"
-      });
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || "Fallo en la llamada API PostgreSQL al eliminar");
-      }
       showToast("Producto eliminado del catálogo");
-      onRefreshProducts(); // Sincroniza los cambios con Cloud SQL
+      onRefreshProducts(); // Sincroniza localmente
     } catch (error: any) {
-      console.error("Could not sync delete with Cloud SQL:", error);
-      showToast(`Error al eliminar producto: ${error.message || error}`, "error");
+      console.error("Could not delete from Firestore:", error);
+      showToast(`Error al eliminar producto de la base de datos: ${error.message || error}`, "error");
     } finally {
       setLoading(false);
     }
