@@ -186,6 +186,57 @@ async function startServer() {
     }
   });
 
+  // --- ENDPOINT DE DIAGNÓSTICO DE LA NUBE (Google Cloud Run / SQL / GCS) ---
+  app.get("/api/diagnostics", async (req, res) => {
+    const diagnostics: any = {
+      database: { status: "not_tested", error: null, host: process.env.SQL_HOST || null, database: process.env.SQL_DB_NAME || null },
+      storage: { status: "not_tested", provider: "Local (Móvil/Temporal)", bucketName: process.env.GCS_BUCKET_NAME || null, warning: null, uploadDir },
+      env: {
+        SQL_HOST_set: !!process.env.SQL_HOST,
+        SQL_USER_set: !!process.env.SQL_USER,
+        SQL_PASSWORD_set: !!process.env.SQL_PASSWORD,
+        SQL_DB_NAME_set: !!process.env.SQL_DB_NAME,
+        GCS_BUCKET_NAME_set: !!process.env.GCS_BUCKET_NAME
+      }
+    };
+
+    // 1. Test Drizzle/PostgreSQL Connection
+    try {
+      await withDBRetry(async () => {
+        // Simple light query
+        await db.select().from(storeConfig).limit(1);
+      });
+      diagnostics.database.status = "success";
+    } catch (dbErr: any) {
+      diagnostics.database.status = "error";
+      diagnostics.database.error = dbErr.message || String(dbErr);
+    }
+
+    // 2. Test Storage Setup
+    if (gcsBucket) {
+      try {
+        const [bucketExists] = await gcsBucket.exists();
+        if (bucketExists) {
+          diagnostics.storage.status = "success";
+          diagnostics.storage.provider = "Google Cloud Storage (Duradero)";
+        } else {
+          diagnostics.storage.status = "error";
+          diagnostics.storage.warning = `El bucket "${process.env.GCS_BUCKET_NAME}" no existe o no tiene los permisos adecuados.`;
+        }
+      } catch (gcsErr: any) {
+        diagnostics.storage.status = "error";
+        diagnostics.storage.provider = "Google Cloud Storage (Fallo)";
+        diagnostics.storage.warning = `Error de GCS: ${gcsErr.message || gcsErr}`;
+      }
+    } else {
+      diagnostics.storage.status = "warning";
+      diagnostics.storage.provider = "Local del Contenedor (Temporal / Alerta de Pérdida)";
+      diagnostics.storage.warning = "En Cloud Run, las fotos y videos locales se borrarán con cada reinicio de contenedor. Se requiere configurar GCS_BUCKET_NAME para persistencia duradera.";
+    }
+
+    return res.json(diagnostics);
+  });
+
   // --- API DE TIENDA Y CONFIGURACIÓN ---
   
   // Obtener configuración de la tienda

@@ -7,7 +7,8 @@ import React, { useState, useEffect } from "react";
 import { Product, StoreConfig } from "../types";
 // No longer importing Firebase Storage or Firestore database modules as we use PostgreSQL Google Cloud SQL and standard media server endpoints.
 import { 
-  Store, Plus, Edit2, Trash2, Save, X, Eye, EyeOff, Video, Link, Check, Image as ImageIcon, Sparkles, FolderPlus, Phone, TrendingUp, ThumbsUp, BarChart2, Upload, CloudUpload, RefreshCw
+  Store, Plus, Edit2, Trash2, Save, X, Eye, EyeOff, Video, Link, Check, Image as ImageIcon, Sparkles, FolderPlus, Phone, TrendingUp, ThumbsUp, BarChart2, Upload, CloudUpload, RefreshCw,
+  Database, HardDrive, AlertTriangle, CheckCircle, Shield, HelpCircle, Terminal
 } from "lucide-react";
 
 interface AdminPanelProps {
@@ -44,9 +45,36 @@ export default function AdminPanel({
     : null;
 
   // Global States
-  const [activeTab, setActiveTab] = useState<"products" | "store">("products");
+  const [activeTab, setActiveTab] = useState<"products" | "store" | "diagnostics">("products");
   const [message, setMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Cloud diagnostics states
+  const [diagnostics, setDiagnostics] = useState<any>(null);
+  const [loadingDiagnostics, setLoadingDiagnostics] = useState(false);
+
+  const fetchDiagnostics = async () => {
+    setLoadingDiagnostics(true);
+    try {
+      const res = await fetch("/api/diagnostics");
+      if (res.ok) {
+        const data = await res.json();
+        setDiagnostics(data);
+      } else {
+        setDiagnostics({ error: `Servidor devolvió estado ${res.status}` });
+      }
+    } catch (err: any) {
+      setDiagnostics({ error: err.message || String(err) });
+    } finally {
+      setLoadingDiagnostics(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === "diagnostics") {
+      fetchDiagnostics();
+    }
+  }, [activeTab]);
 
   // Store Configuration state
   const [storeName, setStoreName] = useState(storeConfig.storeName || "Mi Tienda Virtual");
@@ -676,6 +704,17 @@ export default function AdminPanel({
           >
             Ajustes de Tienda
           </button>
+          <button
+            onClick={() => { setActiveTab("diagnostics"); setIsEditingProduct(false); }}
+            className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center gap-1 ${
+              activeTab === "diagnostics"
+                ? "bg-white text-slate-900 shadow-sm"
+                : "text-slate-500 hover:text-slate-900"
+            }`}
+          >
+            <Database size={12} className={activeTab === "diagnostics" ? "text-amber-500" : "text-slate-400"} />
+            <span>Estado de la Nube</span>
+          </button>
         </div>
       </div>
 
@@ -1189,7 +1228,7 @@ export default function AdminPanel({
             )}
           </div>
         </div>
-      ) : (
+      ) : activeTab === "store" ? (
         
         /* ADJUSTS STORE GENERALS FORM */
         <form onSubmit={handleSaveStoreConfig} className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xs animate-fadeIn space-y-6">
@@ -1305,6 +1344,204 @@ export default function AdminPanel({
             </button>
           </div>
         </form>
+      ) : (
+        /* CLOUD DIAGNOSTICS DETAILED TAB PANEL */
+        <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xs animate-fadeIn space-y-6 text-left">
+          <div className="border-b border-slate-100 pb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h3 className="font-sans font-semibold text-lg text-slate-800 flex items-center gap-2">
+                <Database className="text-amber-500" size={20} />
+                <span>Estado e Integración con la Nube</span>
+              </h3>
+              <p className="text-xs text-slate-400">Verifica la conexión con Google Cloud SQL (PostgreSQL) y Google Cloud Storage (Fotos/Videos) de dstores.app.</p>
+            </div>
+            <button
+              onClick={fetchDiagnostics}
+              disabled={loadingDiagnostics}
+              className="self-start sm:self-auto px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all"
+            >
+              <RefreshCw size={13} className={loadingDiagnostics ? "animate-spin" : ""} />
+              <span>{loadingDiagnostics ? "Probando..." : "Re-probar Conexiones"}</span>
+            </button>
+          </div>
+
+          {loadingDiagnostics ? (
+            <div className="py-12 flex flex-col items-center justify-center gap-3">
+              <RefreshCw size={32} className="animate-spin text-amber-500" />
+              <p className="text-xs text-slate-500 font-medium animate-pulse">Ejecutando diagnóstico y pruebas de conexión de backend...</p>
+            </div>
+          ) : diagnostics ? (
+            <div className="space-y-6">
+              {/* 1. Database Connection Card */}
+              <div className="border border-slate-200 rounded-2xl p-4 md:p-5">
+                <div className="flex items-start gap-4">
+                  <div className={`p-2.5 rounded-xl shrink-0 ${
+                    diagnostics.database?.status === "success" 
+                      ? "bg-emerald-50 text-emerald-600 border border-emerald-100" 
+                      : "bg-rose-50 text-rose-600 border border-rose-100"
+                  }`}>
+                    <Database size={22} />
+                  </div>
+                  <div className="space-y-1.5 flex-1 select-text">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h4 className="font-semibold text-slate-800 text-sm">Base de Datos Google Cloud SQL (PostgreSQL)</h4>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                        diagnostics.database?.status === "success" 
+                          ? "bg-emerald-100 text-emerald-800"
+                          : "bg-rose-100 text-rose-800 animate-pulse"
+                      }`}>
+                        {diagnostics.database?.status === "success" ? "Conectado ✅" : "Error de Conexión ❌"}
+                      </span>
+                    </div>
+
+                    {diagnostics.database?.status === "success" ? (
+                      <p className="text-xs text-slate-500 leading-relaxed">
+                        ¡Excelente! El servidor se ha conectado exitosamente a la base de datos PostgreSQL. Las modificaciones que realices serán duraderas y visibles en tiempo real para todos los clientes en cualquier dispositivo.
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        <p className="text-xs text-rose-700 font-medium">
+                          No se pudo conectar a la base de datos PostgreSQL. Esto explica por qué el catálogo se muestra vacío en otros dispositivos y tus cambios locales no logran subirse de forma global.
+                        </p>
+                        <div className="bg-slate-900 text-slate-200 p-3 rounded-lg text-[11px] font-mono whitespace-pre-wrap overflow-x-auto border border-slate-800 max-h-32">
+                          <span className="text-rose-400">Detalle del Error devuelto por PostgreSQL:</span>
+                          {"\n"}{diagnostics.database?.error || "Fallo de conexión o tiempo de espera excedido (connection timeout)"}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. Media Storage Card */}
+              <div className="border border-slate-200 rounded-2xl p-4 md:p-5">
+                <div className="flex items-start gap-4">
+                  <div className={`p-2.5 rounded-xl shrink-0 ${
+                    diagnostics.storage?.status === "success"
+                      ? "bg-emerald-50 text-emerald-600 border border-emerald-100"
+                      : "bg-amber-50 text-amber-600 border border-amber-100"
+                  }`}>
+                    <HardDrive size={22} />
+                  </div>
+                  <div className="space-y-1.5 flex-1 select-text">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h4 className="font-semibold text-slate-800 text-sm">Almacenamiento de Fotos y Videos de Catálogo</h4>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                        diagnostics.storage?.status === "success"
+                          ? "bg-emerald-100 text-emerald-800"
+                          : "bg-amber-100 text-amber-800"
+                      }`}>
+                        {diagnostics.storage?.status === "success" ? "Persistencia Duradera GCS ✅" : "Almacenamiento Local Temporal ⚠️"}
+                      </span>
+                    </div>
+
+                    <p className="text-xs text-slate-500 leading-relaxed">
+                      Proveedor activo: <strong className="text-slate-700">{diagnostics.storage?.provider}</strong>
+                    </p>
+
+                    {diagnostics.storage?.status !== "success" ? (
+                      <div className="space-y-2 mt-1">
+                        <p className="text-xs text-amber-700 font-medium bg-amber-50/50 p-2.5 border border-amber-100 rounded-lg">
+                          {diagnostics.storage?.warning}
+                        </p>
+                        <p className="text-xs text-slate-500 leading-relaxed">
+                          <span className="font-bold text-slate-700">¿Por qué pasa esto?</span> Google Cloud Run apaga y enciende contenedores de forma automatizada (por ejemplo, cuando no hay visitas para ahorrar costos). Al reiniciarse, el disco del contenedor se vacía por completo, causando que las imágenes y videos cargados desaparezcan y los enlaces dejen de funcionar. Para evitar esto, debes enlazar un Bucket de Google Cloud Storage.
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-500 leading-relaxed">
+                        ¡Configurado correctamente! Los archivos multimedia cargados se guardan de forma permanente en el bucket de Google Cloud Storage <span className="font-mono bg-slate-100 text-slate-700 px-1 py-0.5 rounded text-[11px]">"{diagnostics.storage?.bucketName}"</span>.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* 3. Variables Ambientales de Cloud Run */}
+              <div className="bg-slate-50 rounded-2xl p-4 md:p-5 border border-slate-150 space-y-4">
+                <div className="space-y-1">
+                  <h4 className="text-sm font-semibold text-slate-800 flex items-center gap-1.5">
+                    <Terminal size={15} className="text-slate-500" />
+                    <span>Control de Variables de Entorno en Google Cloud Run</span>
+                  </h4>
+                  <p className="text-xs text-slate-500">
+                    Estas variables de entorno deben estar ingresadas en tu Consola de Google Cloud para que la aplicación funcione en tu dominio <strong className="text-slate-700">dstores.app</strong>:
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+                  <div className="bg-white p-2.5 rounded-lg border border-slate-150 flex items-center justify-between">
+                    <div>
+                      <span className="font-mono text-xs text-slate-800 font-semibold block">SQL_HOST</span>
+                      <span className="text-[10px] text-slate-400">IP / Socket de BD</span>
+                    </div>
+                    <span>{diagnostics.env?.SQL_HOST_set ? "✅ Cargado" : "❌ Falta agregar"}</span>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-lg border border-slate-150 flex items-center justify-between">
+                    <div>
+                      <span className="font-mono text-xs text-slate-800 font-semibold block">SQL_USER</span>
+                      <span className="text-[10px] text-slate-400">Usuario PostgreSQL</span>
+                    </div>
+                    <span>{diagnostics.env?.SQL_USER_set ? "✅ Cargado" : "❌ Falta agregar"}</span>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-lg border border-slate-150 flex items-center justify-between">
+                    <div>
+                      <span className="font-mono text-xs text-slate-800 font-semibold block">SQL_PASSWORD</span>
+                      <span className="text-[10px] text-slate-400">Contraseña de BD</span>
+                    </div>
+                    <span>{diagnostics.env?.SQL_PASSWORD_set ? "✅ Cargado" : "❌ Falta agregar"}</span>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-lg border border-slate-150 flex items-center justify-between">
+                    <div>
+                      <span className="font-mono text-xs text-slate-800 font-semibold block">SQL_DB_NAME</span>
+                      <span className="text-[10px] text-slate-400">Nombre de BD</span>
+                    </div>
+                    <span>{diagnostics.env?.SQL_DB_NAME_set ? "✅ Cargado" : "❌ Falta agregar"}</span>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-lg border border-slate-150 flex items-center justify-between sm:col-span-2">
+                    <div>
+                      <span className="font-mono text-xs text-slate-800 font-semibold block">GCS_BUCKET_NAME</span>
+                      <span className="text-[10px] text-slate-400">Bucket de almacenamiento de fotos (Opcional pero altamente recomendado)</span>
+                    </div>
+                    <span>{diagnostics.env?.GCS_BUCKET_NAME_set ? "✅ Cargado" : "⚠️ Opcional / Falta"}</span>
+                  </div>
+                </div>
+
+                {/* Paso a paso de Google Cloud Run */}
+                <div className="bg-amber-50/50 rounded-xl p-3.5 border border-amber-100 space-y-3">
+                  <span className="font-bold text-amber-950 text-xs flex items-center gap-1">
+                    <HelpCircle size={14} className="text-amber-600" />
+                    <span>Guía PASO A PASO para solucionar el problema en Google Cloud Run:</span>
+                  </span>
+                  <ol className="text-xs text-amber-900/95 space-y-2 pl-4 list-decimal leading-relaxed select-text">
+                    <li>
+                      Ingresa en tu panel de <a href="https://console.cloud.google.com" target="_blank" rel="noopener noreferrer" className="font-bold underline text-amber-950 hover:text-black">Google Cloud Console</a> y dirígete al servicio <strong className="text-amber-950">Cloud Run</strong>.
+                    </li>
+                    <li>
+                      Haz clic en el nombre de tu servicio que está respondiendo en tu dominio (ej. el servicio mapeado a <em className="not-italic font-semibold text-amber-950">dstores.app</em>).
+                    </li>
+                    <li>
+                      Presiona el botón <strong className="text-amber-950">EDITAR Y IMPLEMENTAR NUEVA REVISIÓN</strong> (Edit & Deploy New Revision) en la barra superior.
+                    </li>
+                    <li>
+                      Baja hasta la sección de pestañas y ve a la pestaña de <strong className="text-amber-950">Variables de Entorno</strong> (Variables & Secrets).
+                    </li>
+                    <li>
+                      Añade las variables faltantes (<code className="font-mono bg-amber-100 text-amber-950 px-1 py-0.5 rounded text-[10px]">SQL_HOST</code>, <code className="font-mono bg-amber-100 text-amber-950 px-1 py-0.5 rounded text-[10px]">SQL_USER</code>, <code className="font-mono bg-amber-100 text-amber-950 px-1 py-0.5 rounded text-[10px]">SQL_PASSWORD</code>, <code className="font-mono bg-amber-100 text-amber-950 px-1 py-0.5 rounded text-[10px]">SQL_DB_NAME</code>, e idealmente <code className="font-mono bg-amber-100 text-amber-950 px-1 py-0.5 rounded text-[10px]">GCS_BUCKET_NAME</code>) con los valores reales de tu base de datos y Storage Bucket.
+                    </li>
+                    <li>
+                      Haz clic en el botón inferior <strong className="text-amber-950">IMPLEMENTAR</strong> (Deploy). ¡Listo! Una vez que cargue la nueva revisión, tus fotos se guardarán de forma duradera y tus registros se sincronizarán para todos los dispositivos de tus clientes.
+                    </li>
+                  </ol>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="py-6 text-center text-xs text-rose-500">
+              No se han cargado datos de diagnóstico. Por favor intenta presionar el botón de retest de arriba.
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
