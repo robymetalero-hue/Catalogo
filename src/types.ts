@@ -11,6 +11,7 @@ export interface StoreConfig {
   whatsappCustomMessage?: string;
   locationUrl?: string;
   showPrices: boolean;
+  storeImages?: string[]; // Multiple photos of the store itself
   updatedAt?: any; // Firestore Timestamp or Date ISO string
 }
 

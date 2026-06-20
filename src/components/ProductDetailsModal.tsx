@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Product } from "../types";
 import { X, Phone, Tag, Play, Film, Check, ExternalLink, Sparkles, Image as ImageIcon } from "lucide-react";
 import { motion } from "motion/react";
@@ -28,10 +28,15 @@ export default function ProductDetailsModal({
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [isPlayingVideo, setIsPlayingVideo] = useState(false);
   const [imageLoading, setImageLoading] = useState(true);
+  const imgRef = useRef<HTMLImageElement>(null);
 
   // Trigger loading skeleton during media transitions for ultimate visual polish
   useEffect(() => {
-    setImageLoading(true);
+    if (!isPlayingVideo && imgRef.current && imgRef.current.complete) {
+      setImageLoading(false);
+    } else {
+      setImageLoading(true);
+    }
   }, [activeImageIndex, isPlayingVideo, product.id]);
 
   const images = product.images && product.images.length > 0 ? product.images : [
@@ -144,11 +149,13 @@ export default function ProductDetailsModal({
                     )
                   ) : (
                     <img
+                      ref={imgRef}
                       src={images[activeImageIndex]}
                       alt={product.name}
                       referrerPolicy="no-referrer"
                       loading="lazy"
                       onLoad={() => setImageLoading(false)}
+                      onError={() => setImageLoading(false)}
                       className={`w-full h-full object-cover transition-all duration-300 ease-out ${imageLoading ? "opacity-0 blur-xs" : "opacity-100 blur-none"}`}
                     />
                   )}

@@ -27,6 +27,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
 }) => {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [imageLoading, setImageLoading] = useState(true);
+  const imgRef = React.useRef<HTMLImageElement>(null);
 
   const images = product.images && product.images.length > 0
     ? product.images
@@ -35,7 +36,11 @@ const ProductCard: React.FC<ProductCardProps> = ({
   const currentImageUrl = images[currentImageIndex];
 
   React.useEffect(() => {
-    setImageLoading(true);
+    if (imgRef.current && imgRef.current.complete) {
+      setImageLoading(false);
+    } else {
+      setImageLoading(true);
+    }
   }, [currentImageUrl]);
 
   const handleNextImage = (e: React.MouseEvent) => {
@@ -79,11 +84,13 @@ const ProductCard: React.FC<ProductCardProps> = ({
         )}
 
         <img
+          ref={imgRef}
           src={images[currentImageIndex]}
           alt={product.name}
           referrerPolicy="no-referrer"
           loading="lazy"
           onLoad={() => setImageLoading(false)}
+          onError={() => setImageLoading(false)}
           className={`w-full h-full object-cover transition-all duration-500 ease-out font-sans group-hover:scale-106 ${imageLoading ? 'opacity-0 scale-98 blur-xs' : 'opacity-100 scale-100 blur-none'}`}
         />
 

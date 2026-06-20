@@ -22,6 +22,7 @@ import ProductCard from "./components/ProductCard";
 import ProductDetailsModal from "./components/ProductDetailsModal";
 import AdminPanel from "./components/AdminPanel";
 import ShareCatalogModal from "./components/ShareCatalogModal";
+import StoreLocationSection from "./components/StoreLocationSection";
 import { motion, AnimatePresence } from "motion/react";
 
 const INITIAL_STORE_CONFIG: StoreConfig = {
@@ -76,6 +77,7 @@ export default function App() {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [shareToast, setShareToast] = useState<string | null>(null);
   const [isShareOpen, setIsShareOpen] = useState(false);
+  const [activeViewTab, setActiveViewTab] = useState<"catalog" | "location">("catalog");
 
   // Authentication & Admin states
   const [user, setUser] = useState<AdminUser | null>(() => {
@@ -471,11 +473,8 @@ export default function App() {
   };
 
   const handleOpenGoogleMaps = () => {
-    if (storeConfig.locationUrl) {
-      window.open(storeConfig.locationUrl, "_blank", "noopener,noreferrer");
-    } else {
-      alert("La tienda no ha configurado una dirección dinámica en el mapa todavía.");
-    }
+    setActiveViewTab("location");
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   // Filter products by search bar input and category selections
@@ -616,100 +615,167 @@ export default function App() {
 
           <main className="flex-grow max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8 animate-fadeIn">
             
-            {/* Catalog Banner */}
-            <div id="catalog-hero" className="group w-full bg-slate-900 rounded-3xl overflow-hidden relative mb-8 aspect-21/9 md:aspect-32/10 shadow-lg shadow-slate-900/5">
-              <img
-                src="https://images.unsplash.com/photo-1441986300917-64674bd600d8?q=80&w=1200&auto=format&fit=crop"
-                alt="Banner principal"
-                referrerPolicy="no-referrer"
-                className="w-full h-full object-cover opacity-45 mix-blend-overlay filter saturate-75 transition-transform duration-1000 ease-out group-hover:scale-105"
-              />
-              
-              {/* Share Floating Button with Slow Glow Ring */}
-              <div className="absolute top-4 right-4 md:top-6 md:right-6 z-10">
-                {/* Slow Glow Ring Backdrop */}
-                <motion.div
-                  animate={{
-                    scale: [1, 1.15, 1],
-                    opacity: [0.4, 0.75, 0.4],
-                    boxShadow: [
-                      "0 0 10px 2px rgba(16, 185, 129, 0.2)",
-                      "0 0 20px 8px rgba(16, 185, 129, 0.5)",
-                      "0 0 10px 2px rgba(16, 185, 129, 0.2)"
-                    ]
-                  }}
-                  transition={{
-                    duration: 3,
-                    repeat: Infinity,
-                    ease: "easeInOut"
-                  }}
-                  className="absolute inset-0 bg-emerald-500/25 rounded-xl blur-xs pointer-events-none"
-                />
-                
-                <motion.button
-                  onClick={handleShareCatalog}
-                  whileHover={{ scale: 1.05, backgroundColor: "#065f46" }}
-                  whileTap={{ scale: 0.88, rotate: -1.5 }}
-                  transition={{ type: "spring", stiffness: 500, damping: 15 }}
-                  className="relative flex items-center gap-1.5 px-3 py-1.5 md:px-4 md:py-2 bg-emerald-600 text-white font-bold text-[10px] md:text-xs uppercase tracking-wider rounded-xl shadow-md border border-emerald-500/20 backdrop-blur-xs transition-colors cursor-pointer"
-                  title="Compartir enlace de catálogo comercial"
-                >
-                  <Share2 size={13} className="animate-pulse" />
-                  <span>Compartir Catálogo</span>
-                </motion.button>
-              </div>
-
-              <div className="absolute inset-0 p-6 md:p-8 flex flex-col justify-end text-white">
-                <span className="text-[10px] md:text-xs font-bold text-amber-500 uppercase tracking-widest mb-1 select-none">Catálogo Temporada Invierno 2026</span>
-                <h2 className="text-xl md:text-3xl font-bold font-sans tracking-tight max-w-2xl uppercase">
-                  {storeConfig.storeName || "Mi Tienda Virtual"}
-                </h2>
-                <p className="text-xs md:text-sm text-slate-300 font-medium max-w-md line-clamp-2 mt-1.5">
-                  Filtra tus productos favoritos, copia las especificaciones, revisa los videos instructivos y ordénalo directo por WhatsApp en simples clicks.
-                </p>
-              </div>
+            {/* View Tab Switcher */}
+            <div className="flex border-b border-slate-200 mb-8 w-full font-bold text-xs uppercase tracking-wider select-none">
+              <button
+                onClick={() => setActiveViewTab("catalog")}
+                className={`pb-3 px-5 transition-all border-b-2 relative -mb-[2px] ${
+                  activeViewTab === "catalog"
+                    ? "text-amber-600 border-amber-500 font-extrabold"
+                    : "text-slate-400 border-transparent hover:text-slate-700"
+                }`}
+              >
+                🛍️ Catálogo de Productos
+              </button>
+              <button
+                onClick={() => setActiveViewTab("location")}
+                className={`pb-3 px-5 transition-all border-b-2 relative -mb-[2px] ${
+                  activeViewTab === "location"
+                    ? "text-amber-600 border-amber-500 font-extrabold"
+                    : "text-slate-400 border-transparent hover:text-slate-700"
+                }`}
+              >
+                📍 Ubicación y Fotos
+              </button>
             </div>
 
-            {/* Title / Grid Category Heading */}
-            <div className="flex items-center justify-between gap-4 mb-6">
-              <div className="flex items-center gap-2">
-                <Grid size={16} className="text-slate-400" />
-                <h3 className="font-sans font-bold text-slate-900 uppercase text-xs tracking-wider">
-                  Listando: {selectedCategory} ({filteredProducts.length})
-                </h3>
-              </div>
-            </div>
-
-            {/* Products Grid */}
-            {filteredProducts.length === 0 ? (
-              <motion.div 
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="py-20 text-center bg-white rounded-3xl border border-slate-200 shadow-3xs text-slate-400 flex flex-col items-center justify-center"
-              >
-                <ShoppingBag size={48} className="text-slate-200 mb-2.5 animate-pulse" />
-                <span className="text-sm font-semibold">No se encontraron artículos para tu filtro.</span>
-                <span className="text-xs opacity-70 mt-1">Prueba cambiando tu búsqueda o seleccionando otra categoría.</span>
-              </motion.div>
-            ) : (
-              <motion.div 
-                layout
-                className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"
-              >
-                <AnimatePresence mode="popLayout">
-                  {filteredProducts.map((prod) => (
-                    <ProductCard
-                      key={prod.id}
-                      product={prod}
-                      showPrices={storeConfig.showPrices}
-                      whatsappNumber={storeConfig.whatsappNumber}
-                      whatsappCustomMessage={storeConfig.whatsappCustomMessage}
-                      onOpenDetails={handleSelectProduct}
-                      onWhatsAppInquiry={handleWhatsAppInquiry}
+            {activeViewTab === "catalog" ? (
+              <>
+                {/* Catalog Banner */}
+                <div id="catalog-hero" className="group w-full bg-slate-900 rounded-3xl overflow-hidden relative mb-8 aspect-21/9 md:aspect-32/10 shadow-lg shadow-slate-900/5">
+                  <img
+                    src="https://images.unsplash.com/photo-1441986300917-64674bd600d8?q=80&w=1200&auto=format&fit=crop"
+                    alt="Banner principal"
+                    referrerPolicy="no-referrer"
+                    className="w-full h-full object-cover opacity-45 mix-blend-overlay filter saturate-75 transition-transform duration-1000 ease-out group-hover:scale-105"
+                  />
+                  
+                  {/* Share Floating Button with Slow Glow Ring */}
+                  <div className="absolute top-4 right-4 md:top-6 md:right-6 z-10">
+                    {/* Slow Glow Ring Backdrop */}
+                    <motion.div
+                      animate={{
+                        scale: [1, 1.15, 1],
+                        opacity: [0.4, 0.75, 0.4],
+                        boxShadow: [
+                          "0 0 10px 2px rgba(16, 185, 129, 0.2)",
+                          "0 0 20px 8px rgba(16, 185, 129, 0.5)",
+                          "0 0 10px 2px rgba(16, 185, 129, 0.2)"
+                        ]
+                      }}
+                      transition={{
+                        duration: 3,
+                        repeat: Infinity,
+                        ease: "easeInOut"
+                      }}
+                      className="absolute inset-0 bg-emerald-500/25 rounded-xl blur-xs pointer-events-none"
                     />
-                  ))}
-                </AnimatePresence>
-              </motion.div>
+                    
+                    <motion.button
+                      onClick={handleShareCatalog}
+                      whileHover={{ scale: 1.05, backgroundColor: "#065f46" }}
+                      whileTap={{ scale: 0.88, rotate: -1.5 }}
+                      transition={{ type: "spring", stiffness: 500, damping: 15 }}
+                      className="relative flex items-center gap-1.5 px-3 py-1.5 md:px-4 md:py-2 bg-emerald-600 text-white font-bold text-[10px] md:text-xs uppercase tracking-wider rounded-xl shadow-md border border-emerald-500/20 backdrop-blur-xs transition-colors cursor-pointer"
+                      title="Compartir enlace de catálogo comercial"
+                    >
+                      <Share2 size={13} className="animate-pulse" />
+                      <span>Compartir Catálogo</span>
+                    </motion.button>
+                  </div>
+
+                  <div className="absolute inset-0 p-6 md:p-8 flex flex-col justify-end text-white">
+                    <span className="text-[10px] md:text-xs font-bold text-amber-500 uppercase tracking-widest mb-1 select-none">Catálogo Temporada Invierno 2026</span>
+                    <h2 className="text-xl md:text-3xl font-bold font-sans tracking-tight max-w-2xl uppercase">
+                      {storeConfig.storeName || "Mi Tienda Virtual"}
+                    </h2>
+                    <p className="text-xs md:text-sm text-slate-300 font-medium max-w-md line-clamp-2 mt-1.5">
+                      Filtra tus productos favoritos, copia las especificaciones, revisa los videos instructivos y ordénalo directo por WhatsApp en simples clicks.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Title / Grid Category Heading */}
+                <div className="flex items-center justify-between gap-4 mb-6">
+                  <div className="flex items-center gap-2">
+                    <Grid size={16} className="text-slate-400" />
+                    <h3 className="font-sans font-bold text-slate-900 uppercase text-xs tracking-wider">
+                      Listando: {selectedCategory} ({filteredProducts.length})
+                    </h3>
+                  </div>
+                </div>
+
+                {/* Products Grid */}
+                {filteredProducts.length === 0 ? (
+                  <motion.div 
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="py-20 text-center bg-white rounded-3xl border border-slate-200 shadow-3xs text-slate-400 flex flex-col items-center justify-center"
+                  >
+                    <ShoppingBag size={48} className="text-slate-200 mb-2.5 animate-pulse" />
+                    <span className="text-sm font-semibold">No se encontraron artículos para tu filtro.</span>
+                    <span className="text-xs opacity-70 mt-1">Prueba cambiando tu búsqueda o seleccionando otra categoría.</span>
+                  </motion.div>
+                ) : (
+                  <motion.div 
+                    layout
+                    className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"
+                  >
+                    <AnimatePresence mode="popLayout">
+                      {filteredProducts.map((prod) => (
+                        <ProductCard
+                          key={prod.id}
+                          product={prod}
+                          showPrices={storeConfig.showPrices}
+                          whatsappNumber={storeConfig.whatsappNumber}
+                          whatsappCustomMessage={storeConfig.whatsappCustomMessage}
+                          onOpenDetails={handleSelectProduct}
+                          onWhatsAppInquiry={handleWhatsAppInquiry}
+                        />
+                      ))}
+                    </AnimatePresence>
+                  </motion.div>
+                )}
+
+                {/* Ambient Shop Sneak Peek / Showroom Section at Bottom */}
+                {storeConfig.storeImages && storeConfig.storeImages.length > 0 && (
+                  <div className="mt-20 border-t border-slate-200/60 pt-10 space-y-5">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <h4 className="font-sans font-extrabold text-slate-900 text-sm uppercase tracking-tight">📸 Conoce Nuestra Sucursal Física</h4>
+                        <p className="text-slate-500 text-[11px] font-medium">Te invitamos a visitarnos en nuestro showroom físico para ver el inventario completo.</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setActiveViewTab("location");
+                          window.scrollTo({ top: 0, behavior: "smooth" });
+                        }}
+                        className="text-[10px] font-bold uppercase tracking-wider text-amber-600 hover:text-amber-700 underline self-start sm:self-auto cursor-pointer"
+                      >
+                        Ver dirección completa y mapa &rarr;
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                      {storeConfig.storeImages.slice(0, 4).map((img, idx) => (
+                        <motion.div
+                          key={idx}
+                          whileHover={{ scale: 1.02 }}
+                          onClick={() => {
+                            setActiveViewTab("location");
+                            window.scrollTo({ top: 0, behavior: "smooth" });
+                          }}
+                          className="aspect-16/10 rounded-2xl overflow-hidden border border-slate-200 cursor-pointer bg-slate-100 shadow-3xs"
+                        >
+                          <img src={img} alt={`Sucursal Sneak Peek ${idx + 1}`} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                        </motion.div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <StoreLocationSection storeConfig={storeConfig} />
             )}
           </main>
 

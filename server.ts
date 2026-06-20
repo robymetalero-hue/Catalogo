@@ -292,6 +292,7 @@ async function startServer() {
           whatsappCustomMessage: "Hola, me interesa este producto: {name} ({sku}) - {price}",
           locationUrl: "",
           showPrices: true,
+          storeImages: [],
           updatedAt: new Date().toISOString()
         };
         await docRef.set(defaultDoc);
@@ -318,6 +319,7 @@ async function startServer() {
         whatsappCustomMessage: payload.whatsappCustomMessage || "Hola, me interesa este producto: {name} ({sku}) - {price}",
         locationUrl: payload.locationUrl || "",
         showPrices: payload.showPrices ?? true,
+        storeImages: payload.storeImages || [],
         updatedAt: new Date().toISOString()
       };
       await docRef.set(data, { merge: true });

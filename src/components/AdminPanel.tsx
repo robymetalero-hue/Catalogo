@@ -87,6 +87,7 @@ export default function AdminPanel({
   );
   const [locationUrl, setLocationUrl] = useState(storeConfig.locationUrl || "");
   const [showPrices, setShowPrices] = useState(storeConfig.showPrices);
+  const [storeImagesList, setStoreImagesList] = useState<string[]>([""]);
 
   // Product edits states
   const [isEditingProduct, setIsEditingProduct] = useState(false);
@@ -117,6 +118,7 @@ export default function AdminPanel({
       setWhatsappCustomMessage(storeConfig.whatsappCustomMessage || "");
       setLocationUrl(storeConfig.locationUrl || "");
       setShowPrices(storeConfig.showPrices);
+      setStoreImagesList(storeConfig.storeImages && storeConfig.storeImages.length > 0 ? [...storeConfig.storeImages] : [""]);
     }
   }, [storeConfig]);
 
@@ -136,46 +138,34 @@ export default function AdminPanel({
     setSyncingCloud(true);
     let syncedCount = 0;
     try {
-      showToast("Sincronizando productos directamente con Google Cloud Firestore...");
+      showToast("Sincronizando catálogo con Google Cloud Firestore...");
       
-      // 1. Sync with Firestore (each product documents)
-      for (const product of products) {
-        const docRef = doc(db, "products", product.id);
-        const docData = {
-          sku: product.sku || "",
-          name: product.name || "",
-          description: product.description || "",
-          category: product.category || "General",
-          retailPrice: Number(product.retailPrice) || 0,
-          wholesalePrice: Number(product.wholesalePrice) || 0,
-          images: product.images || [],
-          videoUrl: product.videoUrl || "",
-          isAvailable: product.isAvailable ?? true,
-          views: Number(product.views) || 0,
-          whatsappClicks: Number(product.whatsappClicks) || 0,
-          createdAt: product.createdAt instanceof Date ? product.createdAt.toISOString() : (product.createdAt || new Date().toISOString()),
-          updatedAt: new Date().toISOString()
-        };
-        await setDoc(docRef, docData, { merge: true });
-        syncedCount++;
+      // 1. Sync with Server API (using Firebase Admin SDK securely)
+      const res = await fetch("/api/products/seed", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(products)
+      });
+
+      if (res.ok) {
+        const syncedProdData = await res.json();
+        syncedCount = Array.isArray(syncedProdData) ? syncedProdData.length : products.length;
+      } else {
+        const errJson = await res.json();
+        throw new Error(errJson.error || `HTTP ${res.status}`);
       }
 
       // 2. Sync store configuration to Firestore as well
       let configSaved = false;
       try {
-        const configRef = doc(db, "storeConfig", "default");
-        await setDoc(configRef, {
-          id: "default",
-          storeName: storeConfig.storeName || "Mi Catálogo de WhatsApp",
-          address: storeConfig.address || "",
-          phone: storeConfig.phone || "",
-          whatsappNumber: storeConfig.whatsappNumber || "",
-          whatsappCustomMessage: storeConfig.whatsappCustomMessage || "",
-          locationUrl: storeConfig.locationUrl || "",
-          showPrices: storeConfig.showPrices ?? true,
-          updatedAt: new Date().toISOString()
-        }, { merge: true });
-        configSaved = true;
+        const configRes = await fetch("/api/store-config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(storeConfig)
+        });
+        if (configRes.ok) {
+          configSaved = true;
+        }
       } catch (err) {
         console.warn("Fallo sincronizando config en la nube Firestore:", err);
       }
@@ -420,6 +410,86 @@ export default function AdminPanel({
     }
   };
 
+  const handleStoreMediaUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const rawFiles = e.target.files;
+    if (!rawFiles || rawFiles.length === 0) return;
+
+    setUploadingMedia(true);
+    setUploadError("");
+    setLoading(true);
+
+    try {
+      const filesArray = Array.from(rawFiles) as File[];
+      for (const file of filesArray) {
+        const isImage = file.type.startsWith("image/");
+        if (!isImage) {
+          throw new Error(`El archivo "${file.name}" no es una imagen compatible.`);
+        }
+        if (file.size > 15 * 1024 * 1024) {
+          throw new Error(`La imagen "${file.name}" supera el tamaño máximo de 15MB.`);
+        }
+      }
+
+      setUploadProgressMsg("Procesando fotos de la tienda...");
+      const processedFiles: File[] = await Promise.all(
+        filesArray.map(async (file) => {
+          try {
+            return await compressImage(file);
+          } catch (err) {
+            return file;
+          }
+        })
+      );
+
+      const uploadedUrls: string[] = [];
+      let index = 1;
+      for (const file of processedFiles) {
+        setUploadProgressMsg(`Subiendo foto ${index} de ${processedFiles.length} (0%)...`);
+        const url = await uploadWithProgress(file, (percent) => {
+          setUploadProgressMsg(`Subiendo foto ${index} de ${processedFiles.length} (${percent}%)...`);
+        });
+        if (url) {
+          uploadedUrls.push(url);
+        }
+        index++;
+      }
+
+      setStoreImagesList((prev) => {
+        const cleaned = prev.filter((img) => img.trim() !== "");
+        const combined = [...cleaned, ...uploadedUrls];
+        return combined.length === 0 ? [""] : combined;
+      });
+
+      showToast(`¡Se cargaron exitosamente ${uploadedUrls.length} fotos de la tienda!`);
+    } catch (err: any) {
+      console.error(err);
+      showToast(`Error al subir fotos de la tienda: ${err.message}`, "error");
+    } finally {
+      setUploadingMedia(false);
+      setLoading(false);
+      setUploadProgressMsg("");
+      e.target.value = "";
+    }
+  };
+
+  const handleAddStoreImageField = () => {
+    setStoreImagesList([...storeImagesList, ""]);
+  };
+
+  const handleStoreImageFieldChange = (index: number, val: string) => {
+    const updated = [...storeImagesList];
+    updated[index] = val;
+    setStoreImagesList(updated);
+  };
+
+  const handleRemoveStoreImageField = (index: number) => {
+    if (storeImagesList.length === 1) {
+      setStoreImagesList([""]);
+    } else {
+      setStoreImagesList(storeImagesList.filter((_, idx) => idx !== index));
+    }
+  };
+
   // Action: Save general config to Google Cloud SQL (PostgreSQL)
   const handleSaveStoreConfig = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -433,6 +503,7 @@ export default function AdminPanel({
       whatsappCustomMessage: whatsappCustomMessage.trim(),
       locationUrl: locationUrl.trim(),
       showPrices: !!showPrices,
+      storeImages: storeImagesList.filter(url => url.trim() !== ""),
       updatedAt: new Date()
     };
 
@@ -443,19 +514,17 @@ export default function AdminPanel({
     } catch (err) {}
 
     try {
-      // Save directly to Google Cloud Firestore
-      const docRef = doc(db, "storeConfig", "default");
-      await setDoc(docRef, {
-        id: "default",
-        storeName: updatedData.storeName || "Mi Catálogo de WhatsApp",
-        address: updatedData.address || "",
-        phone: updatedData.phone || "",
-        whatsappNumber: updatedData.whatsappNumber || "",
-        whatsappCustomMessage: updatedData.whatsappCustomMessage || "",
-        locationUrl: updatedData.locationUrl || "",
-        showPrices: updatedData.showPrices ?? true,
-        updatedAt: updatedData.updatedAt instanceof Date ? updatedData.updatedAt.toISOString() : (updatedData.updatedAt || new Date().toISOString())
-      }, { merge: true });
+      // Save directly to Google Cloud Firestore through secure Server API
+      const res = await fetch("/api/store-config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updatedData)
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json();
+        throw new Error(errJson.error || `HTTP ${res.status}`);
+      }
 
       console.log("Configuración de tienda guardada exitosamente en Firestore!");
       showToast("Configuración general guardada exitosamente en Firestore");
@@ -589,28 +658,30 @@ export default function AdminPanel({
     setIsEditingProduct(false);
 
     try {
-      // Save product directly to Google Cloud Firestore
-      const docRef = doc(db, "products", id);
-      const docData: any = {
-        sku: reqObj.sku,
-        name: reqObj.name,
-        description: reqObj.description,
-        category: reqObj.category,
-        retailPrice: Number(reqObj.retailPrice) || 0,
-        wholesalePrice: Number(reqObj.wholesalePrice) || 0,
-        images: reqObj.images || [],
-        videoUrl: reqObj.videoUrl || "",
-        isAvailable: reqObj.isAvailable ?? true,
-        updatedAt: currentTime.toISOString()
-      };
-
-      if (!editingProductId) {
-        docData.createdAt = currentTime.toISOString();
-        docData.views = 0;
-        docData.whatsappClicks = 0;
+      // Save product directly to Google Cloud Firestore through Server API
+      let res;
+      if (editingProductId) {
+        res = await fetch(`/api/products/${editingProductId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(reqObj)
+        });
+      } else {
+        const createObj = {
+          id,
+          ...reqObj
+        };
+        res = await fetch("/api/products", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(createObj)
+        });
       }
 
-      await setDoc(docRef, docData, { merge: true });
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || `HTTP ${res.status}`);
+      }
 
       console.log("Producto guardado exitosamente en Firestore!");
       showToast(savedMsg);
@@ -637,9 +708,15 @@ export default function AdminPanel({
     } catch (e) {}
 
     try {
-      // Delete from Firestore directly
-      const docRef = doc(db, "products", id);
-      await deleteDoc(docRef);
+      // Delete from Firestore directly through Server API
+      const res = await fetch(`/api/products/${id}`, {
+        method: "DELETE"
+      });
+
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || `HTTP ${res.status}`);
+      }
 
       console.log("Producto eliminado de Firestore!");
       showToast("Producto eliminado del catálogo");
@@ -1330,6 +1407,108 @@ export default function AdminPanel({
                 className="w-9 h-5 text-amber-500 bg-slate-100 border-slate-300 rounded-full focus:ring-amber-500"
               />
             </div>
+          </div>
+
+          {/* Store Location Photos & Galleries Roster */}
+          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4">
+            <div className="border-b border-slate-200 pb-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <span className="text-xs font-bold text-slate-800 block uppercase tracking-wider">Fotografías de la Sucursal / Tienda ({storeImagesList.filter(url => url.trim() !== "").length})</span>
+                <span className="text-[10px] text-slate-400 block font-medium">Sube fotos o añade enlaces de tu showroom, frontis o estanterías de venta para que los clientes reconozcan tu ubicación física.</span>
+              </div>
+              <button
+                type="button"
+                onClick={handleAddStoreImageField}
+                className="text-[10px] font-bold uppercase tracking-wider text-amber-600 hover:text-amber-700 underline self-start sm:self-auto"
+              >
+                + Enlace Manual
+              </button>
+            </div>
+
+            {/* Upload Zone for Store Photos */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
+              <div className="border border-dashed border-slate-300 hover:border-amber-400 bg-amber-50/5 hover:bg-amber-50/15 p-4 rounded-xl transition-all relative flex flex-col items-center justify-center text-center h-[140px]">
+                <input
+                  type="file"
+                  multiple
+                  accept="image/*"
+                  onChange={handleStoreMediaUpload}
+                  disabled={uploadingMedia}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                />
+                
+                <div className="flex flex-col items-center pointer-events-none">
+                  <Upload size={16} className={`text-amber-505 mb-1.5 ${uploadingMedia ? "animate-bounce text-amber-600" : "text-amber-500"}`} />
+                  <span className="text-[11px] font-extrabold text-slate-700 uppercase tracking-wider">
+                    {uploadingMedia ? "Subiendo fotos..." : "Subir Fotos de Tienda"}
+                  </span>
+                  <span className="text-[9px] text-slate-400 mt-1 max-w-[180px]">
+                    PNG, JPG o JPEG (Hasta 15MB)
+                  </span>
+                </div>
+              </div>
+
+              {/* Grid of uploaded store images previews */}
+              <div className="md:col-span-2">
+                {storeImagesList.filter(url => url.trim() !== "").length > 0 ? (
+                  <div className="grid grid-cols-4 gap-2.5 bg-white p-3 rounded-xl border border-slate-200">
+                    {storeImagesList.map((url, index) => {
+                      if (!url.trim()) return null;
+                      return (
+                        <div key={index} className="relative aspect-square rounded-xl overflow-hidden border border-slate-200 group bg-slate-50 shadow-3xs">
+                          <img 
+                            src={url} 
+                            alt={`Store Thumbnail ${index + 1}`} 
+                            referrerPolicy="no-referrer"
+                            className="w-full h-full object-cover" 
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveStoreImageField(index)}
+                            className="absolute top-1 right-1 p-1 bg-rose-500 hover:bg-rose-600 text-white rounded-full transition-colors shadow-xs"
+                            title="Remover imagen"
+                          >
+                            <X size={10} />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="h-[140px] border border-slate-200 border-dashed rounded-xl bg-white flex flex-col items-center justify-center text-center text-slate-400">
+                    <Store size={22} className="text-slate-200 mb-1" />
+                    <span className="text-[10px] font-bold uppercase tracking-wide">Sin imágenes cargadas</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Manual input list for store image URLs */}
+            <details className="text-left border border-slate-200 rounded-xl bg-white">
+              <summary className="px-3.5 py-2 text-[10px] font-bold text-slate-500 uppercase tracking-wide cursor-pointer select-none hover:bg-slate-50 rounded-xl">
+                Editar Enlaces de Fotos de Tienda ({storeImagesList.length})
+              </summary>
+              <div className="p-3 space-y-2 max-h-48 overflow-y-auto pr-1 border-t border-slate-200">
+                {storeImagesList.map((url, index) => (
+                  <div key={index} className="flex gap-2 items-center">
+                    <input
+                      type="text"
+                      value={url}
+                      onChange={(e) => handleStoreImageFieldChange(index, e.target.value)}
+                      className="flex-grow px-3 py-1.5 border border-slate-200 rounded-lg text-xs focus:outline-hidden bg-white text-slate-700 font-medium"
+                      placeholder="Enlace o ruta del archivo: /uploads/..."
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveStoreImageField(index)}
+                      className="text-rose-500 hover:text-rose-700 text-xs font-medium px-2 py-1.5 border border-slate-250 bg-white hover:bg-slate-100 rounded-lg shrink-0 transition-colors"
+                    >
+                      Eliminar
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </details>
           </div>
 
           {/* Save Button Row */}
