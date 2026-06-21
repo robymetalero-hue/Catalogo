@@ -30,6 +30,8 @@ export interface Product {
   images: string[]; // List of URLs
   videoUrl?: string; // YouTube, Vimeo or Direct video link
   isAvailable: boolean;
+  hidePrice?: boolean; // Hide price for this specific product
+  isHidden?: boolean; // Hide catalog item entirely from customers without deleting
   createdAt?: any;
   updatedAt?: any;
   views?: number;

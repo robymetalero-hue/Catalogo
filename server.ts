@@ -846,6 +846,8 @@ async function startServer() {
         images: p.images || [],
         videoUrl: p.videoUrl || "",
         isAvailable: p.isAvailable ?? true,
+        hidePrice: p.hidePrice ?? false,
+        isHidden: p.isHidden ?? false,
         views: Number(p.views) || 0,
         whatsappClicks: Number(p.whatsappClicks) || 0,
         createdAt: p.createdAt ? new Date(p.createdAt).toISOString() : new Date().toISOString(),
@@ -884,6 +886,8 @@ async function startServer() {
       if (p.images !== undefined) updateData.images = p.images;
       if (p.videoUrl !== undefined) updateData.videoUrl = p.videoUrl;
       if (p.isAvailable !== undefined) updateData.isAvailable = p.isAvailable;
+      if (p.hidePrice !== undefined) updateData.hidePrice = p.hidePrice;
+      if (p.isHidden !== undefined) updateData.isHidden = p.isHidden;
       if (p.views !== undefined) updateData.views = Number(p.views) || 0;
       if (p.whatsappClicks !== undefined) updateData.whatsappClicks = Number(p.whatsappClicks) || 0;
       updateData.updatedAt = new Date().toISOString();

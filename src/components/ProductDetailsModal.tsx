@@ -100,7 +100,7 @@ export default function ProductDetailsModal({
     resolvedText = resolvedText.replace(/{productSku}/gi, product.sku || "");
     resolvedText = resolvedText.replace(/{sku}/gi, product.sku || "");
     
-    const priceFormatted = product.retailPrice !== undefined && product.retailPrice !== null
+    const priceFormatted = showPrices && !product.hidePrice && product.retailPrice !== undefined && product.retailPrice !== null
       ? `$${product.retailPrice.toLocaleString()}`
       : "";
     resolvedText = resolvedText.replace(/{productPrice}/gi, priceFormatted);
@@ -270,7 +270,7 @@ export default function ProductDetailsModal({
                 </h2>
 
                 {/* Prices block */}
-                {showPrices ? (
+                {showPrices && !product.hidePrice ? (
                   <div className="bg-gradient-to-r from-slate-50 to-slate-100/50 border border-slate-100/80 rounded-2xl p-4.5 flex justify-between gap-4 mb-6 relative overflow-hidden">
                     <div className="absolute right-0 top-0 translate-x-1/3 -translate-y-1/3 w-32 h-32 bg-amber-500/5 rounded-full pointer-events-none" />
                     <div>

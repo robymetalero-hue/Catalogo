@@ -48,7 +48,7 @@ export default function AdminPanel({
     : null;
 
   // Global States
-  const [activeTab, setActiveTab] = useState<"products" | "store" | "diagnostics" | "users">("products");
+  const [activeTab, setActiveTab] = useState<"products" | "store" | "diagnostics" | "users" | "categories">("products");
   const [message, setMessage] = useState<{ text: string; type: "success" | "error" | "warning" } | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -242,6 +242,14 @@ export default function AdminPanel({
   const [promoBannerText, setPromoBannerText] = useState(storeConfig.promoBannerText || "");
   const [storeImagesList, setStoreImagesList] = useState<string[]>([""]);
 
+  // Categories management states
+  const [categoriesList, setCategoriesList] = useState<string[]>(() => {
+    return (storeConfig as any).customCategories && (storeConfig as any).customCategories.length > 0
+      ? [...(storeConfig as any).customCategories]
+      : ["Calzado", "Ropa", "Accesorios", "Hogar", "Tecnología", "Salud y Belleza", "Deportes", "Otros"];
+  });
+  const [newCategoryName, setNewCategoryName] = useState("");
+
   // Product edits states
   const [isEditingProduct, setIsEditingProduct] = useState(false);
   const [editingProductId, setEditingProductId] = useState<string | null>(null); // null = new product
@@ -253,8 +261,10 @@ export default function AdminPanel({
   const [category, setCategory] = useState("Otros");
   const [newCustomCategory, setNewCustomCategory] = useState("");
   const [retailPrice, setRetailPrice] = useState(0);
-  const [wholesalePrice, setWholesalePrice] = useState(0);
+  const[wholesalePrice, setWholesalePrice] = useState(0);
   const [isAvailable, setIsAvailable] = useState(true);
+  const [formHidePrice, setFormHidePrice] = useState(false);
+  const [formIsHidden, setFormIsHidden] = useState(false);
   const [videoUrl, setVideoUrl] = useState("");
   const [imagesList, setImagesList] = useState<string[]>([""]);
   const [uploadingMedia, setUploadingMedia] = useState(false);
@@ -277,6 +287,9 @@ export default function AdminPanel({
       setBannerStyle(storeConfig.bannerStyle || "classic");
       setPromoBannerText(storeConfig.promoBannerText || "");
       setStoreImagesList(storeConfig.storeImages && storeConfig.storeImages.length > 0 ? [...storeConfig.storeImages] : [""]);
+      if ((storeConfig as any).customCategories && (storeConfig as any).customCategories.length > 0) {
+        setCategoriesList([...(storeConfig as any).customCategories]);
+      }
     }
   }, [storeConfig]);
 
@@ -890,6 +903,8 @@ export default function AdminPanel({
     setRetailPrice(0);
     setWholesalePrice(0);
     setIsAvailable(true);
+    setFormHidePrice(false);
+    setFormIsHidden(false);
     setVideoUrl("");
     setImagesList([""]); // initialize with one empty field
     setIsEditingProduct(true);
@@ -901,7 +916,7 @@ export default function AdminPanel({
     setSku(product.sku);
     setName(product.name);
     setDescription(product.description || "");
-    if (CATEGORY_PRESETS.includes(product.category)) {
+    if (categoriesList.includes(product.category)) {
       setCategory(product.category);
       setNewCustomCategory("");
     } else {
@@ -911,6 +926,8 @@ export default function AdminPanel({
     setRetailPrice(product.retailPrice || 0);
     setWholesalePrice(product.wholesalePrice || 0);
     setIsAvailable(product.isAvailable !== false);
+    setFormHidePrice(product.hidePrice ?? false);
+    setFormIsHidden(product.isHidden ?? false);
     setVideoUrl(product.videoUrl || "");
     setImagesList(product.images && product.images.length > 0 ? [...product.images] : [""]);
     setIsEditingProduct(true);
@@ -972,6 +989,8 @@ export default function AdminPanel({
       images: filteredImages,
       videoUrl: videoUrl.trim(),
       isAvailable: !!isAvailable,
+      hidePrice: !!formHidePrice,
+      isHidden: !!formIsHidden,
       updatedAt: currentTime
     };
 
@@ -1056,6 +1075,155 @@ export default function AdminPanel({
     } finally {
       setLoading(false);
     }
+  };
+
+  // Toggle individual product price visibility
+  const handleToggleProductPrice = async (product: Product) => {
+    const updatedVal = !product.hidePrice;
+    
+    // Immediate UI feedback
+    setProducts(products.map(p => p.id === product.id ? { ...p, hidePrice: updatedVal } : p));
+    
+    try {
+      const productRef = doc(db, "products", product.id);
+      await updateDoc(productRef, {
+        hidePrice: updatedVal,
+        updatedAt: new Date().toISOString()
+      });
+      showToast(`Precios para "${product.name}" ahora están ${updatedVal ? "ocultos" : "visibles"}`);
+      // Fallback update on server too
+      await fetch(`/api/products/${product.id}`, {
+        method: "PUT",
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": currentUser?.uid || ""
+        },
+        body: JSON.stringify({ hidePrice: updatedVal })
+      });
+    } catch (err: any) {
+      console.error("Error setting price visibility:", err);
+      showToast(`Error al cambiar visibilidad de precios: ${err.message}`, "error");
+    }
+  };
+
+  // Toggle individual product structural visibility in the catalog
+  const handleToggleProductVisibility = async (product: Product) => {
+    const updatedVal = !product.isHidden;
+    
+    // Immediate UI feedback
+    setProducts(products.map(p => p.id === product.id ? { ...p, isHidden: updatedVal } : p));
+    
+    try {
+      const productRef = doc(db, "products", product.id);
+      await updateDoc(productRef, {
+        isHidden: updatedVal,
+        updatedAt: new Date().toISOString()
+      });
+      showToast(`"${product.name}" ahora está ${updatedVal ? "oculto" : "visible"}`);
+      // Fallback update on server too
+      await fetch(`/api/products/${product.id}`, {
+        method: "PUT",
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": currentUser?.uid || ""
+        },
+        body: JSON.stringify({ isHidden: updatedVal })
+      });
+    } catch (err: any) {
+      console.error("Error setting product visibility:", err);
+      showToast(`Error al cambiar visibilidad de producto: ${err.message}`, "error");
+    }
+  };
+
+  // Update dynamic store categories
+  const handleUpdateCategories = async (newCats: string[]) => {
+    setCategoriesList(newCats);
+    
+    const updatedData: StoreConfig = {
+      ...storeConfig,
+      customCategories: newCats,
+    } as any;
+    
+    setStoreConfig(updatedData);
+    try {
+      localStorage.setItem("local_store_config_cache", JSON.stringify(updatedData));
+    } catch (err) {}
+
+    try {
+      const fsPayload = {
+        ...updatedData,
+        updatedAt: new Date().toISOString()
+      };
+      await setDoc(doc(db, "storeConfig", "default"), fsPayload);
+      console.log("[Firebase Client] Categorías actualizadas en Firestore!");
+      onRefreshConfig();
+    } catch (fsErr: any) {
+      console.warn("[Firebase Client] Error escribiendo categorías a Firestore:", fsErr);
+    }
+  };
+
+  // Delete category and reassign items to "Otros"
+  const handleRemoveCategory = async (catToRemove: string) => {
+    if (window.confirm(`¿Estás seguro de que deseas eliminar la categoría "${catToRemove}"? Todos los productos en esta categoría se reasignarán automáticamente a la categoría "Otros".`)) {
+      setLoading(true);
+      const filteredCats = categoriesList.filter(c => c !== catToRemove);
+      
+      // Update local set first
+      const updatedProducts = products.map(p => p.category === catToRemove ? { ...p, category: "Otros" } : p);
+      setProducts(updatedProducts);
+      
+      try {
+        const productsToUpdate = products.filter(p => p.category === catToRemove);
+        for (const prodToUpdate of productsToUpdate) {
+          const productRef = doc(db, "products", prodToUpdate.id);
+          await updateDoc(productRef, {
+            category: "Otros",
+            updatedAt: new Date().toISOString()
+          });
+          // Fallback update on server too
+          await fetch(`/api/products/${prodToUpdate.id}`, {
+            method: "PUT",
+            headers: { 
+              "Content-Type": "application/json",
+              "Authorization": currentUser?.uid || ""
+            },
+            body: JSON.stringify({ category: "Otros" })
+          });
+        }
+        
+        if (!filteredCats.includes("Otros")) {
+          filteredCats.push("Otros");
+        }
+        
+        await handleUpdateCategories(filteredCats);
+        showToast(`Categoría "${catToRemove}" eliminada con éxito de la base de datos.`);
+        onRefreshProducts();
+      } catch (err: any) {
+        console.error("Error removing category:", err);
+        showToast(`Error al remover categoría: ${err.message}`, "error");
+      } finally {
+        setLoading(false);
+      }
+    }
+  };
+
+  // Create/Add a new category
+  const handleAddCategory = async () => {
+    const trimmed = newCategoryName.trim();
+    if (!trimmed) {
+      showToast("La categoría no puede estar vacía", "error");
+      return;
+    }
+    
+    if (categoriesList.map(c => c.toLowerCase()).includes(trimmed.toLowerCase())) {
+      showToast("Esta categoría ya existe en la lista", "error");
+      return;
+    }
+    
+    const updatedCats = [...categoriesList, trimmed];
+    await handleUpdateCategories(updatedCats);
+    setNewCategoryName("");
+    showToast(`Categoría "${trimmed}" creada con éxito.`);
   };
 
   // Action: Delete product
@@ -1164,6 +1332,16 @@ export default function AdminPanel({
           >
             Ajustes de Tienda
           </button>
+          <button
+            onClick={() => { setActiveTab("categories"); setIsEditingProduct(false); setIsEditingUser(false); }}
+            className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+              activeTab === "categories"
+                ? "bg-white text-slate-900 shadow-sm"
+                : "text-slate-500 hover:text-slate-900"
+            }`}
+          >
+            Categorías
+          </button>
 
           {currentUser?.role === "Administrador" && (
             <>
@@ -1247,7 +1425,7 @@ export default function AdminPanel({
                     onChange={(e) => setCategory(e.target.value)}
                     className="w-full px-3.5 py-2 border border-slate-200 rounded-lg text-sm bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
                   >
-                    {CATEGORY_PRESETS.map((cat) => (
+                    {categoriesList.map((cat) => (
                       <option key={cat} value={cat}>{cat}</option>
                     ))}
                     <option value="Custom">+ Agregar otra categoría</option>
@@ -1306,17 +1484,45 @@ export default function AdminPanel({
                 />
               </div>
 
-              <div className="flex items-center gap-2 py-1 bg-slate-50 px-3 rounded-lg border border-dashed border-slate-200">
-                <input
-                  type="checkbox"
-                  id="isAvailable"
-                  checked={isAvailable}
-                  onChange={(e) => setIsAvailable(e.target.checked)}
-                  className="w-4 h-4 text-amber-500 border-slate-300 rounded-sm focus:ring-amber-500"
-                />
-                <label htmlFor="isAvailable" className="text-xs font-semibold text-slate-700">
-                  Producto disponible en stock
-                </label>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 py-2 bg-slate-50 px-3.5 rounded-xl border border-slate-200">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="isAvailable"
+                    checked={isAvailable}
+                    onChange={(e) => setIsAvailable(e.target.checked)}
+                    className="w-4 h-4 text-amber-500 border-slate-300 rounded-sm focus:ring-amber-500 cursor-pointer"
+                  />
+                  <label htmlFor="isAvailable" className="text-[11px] font-bold text-slate-700 cursor-pointer select-none">
+                    En Stock / Disponible
+                  </label>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="formHidePrice"
+                    checked={formHidePrice}
+                    onChange={(e) => setFormHidePrice(e.target.checked)}
+                    className="w-4 h-4 text-amber-500 border-slate-300 rounded-sm focus:ring-amber-500 cursor-pointer"
+                  />
+                  <label htmlFor="formHidePrice" className="text-[11px] font-bold text-slate-700 cursor-pointer select-none">
+                    Ocultar Precio (Public)
+                  </label>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="formIsHidden"
+                    checked={formIsHidden}
+                    onChange={(e) => setFormIsHidden(e.target.checked)}
+                    className="w-4 h-4 text-amber-500 border-slate-300 rounded-sm focus:ring-amber-500 cursor-pointer"
+                  />
+                  <label htmlFor="formIsHidden" className="text-[11px] font-bold text-slate-700 cursor-pointer select-none">
+                    Ocultar de Catálogo
+                  </label>
+                </div>
               </div>
             </div>
 
@@ -1754,10 +1960,38 @@ export default function AdminPanel({
                           </div>
                         </td>
                         <td className="p-4 text-right">
-                          <div className="flex items-center justify-end gap-2">
+                          <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                            {/* Ocultar/Mostrar Precio */}
+                            <button
+                              onClick={() => handleToggleProductPrice(prod)}
+                              className={`p-1 px-2 text-[10px] border rounded-lg font-bold flex items-center gap-1 transition-all cursor-pointer ${
+                                prod.hidePrice
+                                  ? "bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100"
+                                  : "bg-slate-50 border-slate-200 hover:bg-slate-100"
+                              }`}
+                              title={prod.hidePrice ? "Mostrar precio al público" : "Ocultar precio al público"}
+                            >
+                              {prod.hidePrice ? <EyeOff size={11} className="text-amber-500" /> : <Eye size={11} />}
+                              <span>{prod.hidePrice ? "Pr. Oculto" : "Ocultar Pr."}</span>
+                            </button>
+
+                            {/* Ocultar/Mostrar Producto Entero */}
+                            <button
+                              onClick={() => handleToggleProductVisibility(prod)}
+                              className={`p-1 px-2 text-[10px] border rounded-lg font-bold flex items-center gap-1 transition-all cursor-pointer ${
+                                prod.isHidden
+                                  ? "bg-rose-50 border-rose-250 text-rose-700 hover:bg-rose-100"
+                                  : "bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100"
+                              }`}
+                              title={prod.isHidden ? "Hacer visible en catálogo público" : "Ocultar del catálogo público"}
+                            >
+                              {prod.isHidden ? <EyeOff size={11} className="text-rose-500 animate-pulse" /> : <Eye size={11} />}
+                              <span>{prod.isHidden ? "Oculto" : "Visible"}</span>
+                            </button>
+
                             <button
                               onClick={() => handleOpenEditProduct(prod)}
-                              className="p-1 px-2.5 text-xs border border-slate-200 hover:border-slate-300 hover:bg-slate-50 rounded-lg text-slate-600 font-semibold flex items-center gap-1"
+                              className="p-1 px-2 text-xs border border-slate-200 hover:border-slate-300 hover:bg-slate-50 rounded-lg text-slate-600 font-semibold flex items-center gap-1 cursor-pointer"
                               title="Editar producto"
                             >
                               <Edit2 size={12} />
@@ -1765,7 +1999,7 @@ export default function AdminPanel({
                             </button>
                             <button
                               onClick={() => handleDeleteProduct(prod.id)}
-                              className="p-1 px-2.5 text-xs border border-rose-100 hover:bg-rose-50 rounded-lg text-rose-500 font-semibold flex items-center gap-1"
+                              className="p-1 px-2 text-xs border border-rose-100 hover:bg-rose-50 rounded-lg text-rose-500 font-semibold flex items-center gap-1 cursor-pointer"
                               title="Eliminar producto"
                             >
                               <Trash2 size={12} />
@@ -2075,6 +2309,80 @@ export default function AdminPanel({
             </button>
           </div>
         </form>
+      ) : activeTab === "categories" ? (
+        /* CATEGORY MANAGEMENT PANEL */
+        <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xs animate-fadeIn space-y-6 text-left">
+          <div className="border-b border-slate-100 pb-3">
+            <h3 className="font-sans font-bold text-lg text-slate-800">Clasificación y Gestión de Categorías</h3>
+            <p className="text-xs text-slate-400">Agrega o remueve las categorías comerciales que tus clientes usarán para buscar productos.</p>
+          </div>
+
+          {/* Form to Add New Category */}
+          <div className="bg-slate-50 border border-slate-100 rounded-2xl p-5 space-y-4">
+            <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Crear nueva categoría</h4>
+            <div className="flex flex-col sm:flex-row gap-3">
+              <input
+                type="text"
+                placeholder="Ej: Calzado Deportivo, Abrigos, Joyas..."
+                value={newCategoryName}
+                onChange={(e) => setNewCategoryName(e.target.value)}
+                className="flex-1 px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
+              />
+              <button
+                type="button"
+                onClick={handleAddCategory}
+                className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-semibold transition-all shadow-md shadow-amber-500/15 flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <FolderPlus size={14} />
+                <span>Agregar categoría</span>
+              </button>
+            </div>
+          </div>
+
+          {/* List of categories */}
+          <div className="space-y-3">
+            <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Categorías comerciales actuales</h4>
+            
+            {categoriesList.length === 0 ? (
+              <p className="text-xs text-slate-400 italic">No hay categorías configuradas. Se usarán valores predeterminados.</p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {categoriesList.map((cat) => {
+                  const productsCount = products.filter(p => p.category === cat).length;
+                  const isSystemDefault = cat === "Otros";
+
+                  return (
+                    <div 
+                      key={cat} 
+                      className="flex items-center justify-between p-3.5 bg-white border border-slate-200/80 rounded-xl hover:shadow-2xs transition-shadow"
+                    >
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-sm font-semibold text-slate-900">{cat}</span>
+                        <span className="text-[11px] text-slate-400">{productsCount} productos asignados</span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {isSystemDefault ? (
+                          <span className="text-[10px] bg-slate-100 text-slate-500 font-bold px-2 py-1 rounded-md uppercase">Por Defecto</span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveCategory(cat)}
+                            className="p-1.5 border border-rose-100 hover:bg-rose-50 text-rose-500 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                            title="Eliminar esta categoría y reasignar sus productos"
+                          >
+                            <Trash2 size={12} />
+                            <span>Eliminar</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
       ) : activeTab === "diagnostics" ? (
         /* CLOUD DIAGNOSTICS DETAILED TAB PANEL */
         <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xs animate-fadeIn space-y-6 text-left">

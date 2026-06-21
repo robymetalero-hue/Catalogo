@@ -11,10 +11,10 @@ import {
   signInWithEmailAndPassword, createUserWithEmailAndPassword
 } from "firebase/auth";
 import { 
-  collection, getDocs, doc, getDoc, updateDoc, query, orderBy, setDoc 
+  collection, getDocs, doc, getDoc, updateDoc, query, orderBy, setDoc, onSnapshot 
 } from "firebase/firestore";
 import { 
-  Lock, LogOut, CheckCircle2, ShoppingBag, Grid, Compass, Smartphone, AlertCircle, X, ShieldAlert, Share2, Sparkles, HelpCircle, Send, ArrowLeft
+  Lock, LogOut, CheckCircle2, ShoppingBag, Grid, Compass, Smartphone, AlertCircle, X, ShieldAlert, Share2, Sparkles, HelpCircle, Send, ArrowLeft, RefreshCw
 } from "lucide-react";
 import StoreHeader from "./components/StoreHeader";
 import StoreFooter from "./components/StoreFooter";
@@ -79,6 +79,7 @@ export default function App() {
   const [shareToast, setShareToast] = useState<string | null>(null);
   const [isShareOpen, setIsShareOpen] = useState(false);
   const [activeViewTab, setActiveViewTab] = useState<"catalog" | "location">("catalog");
+  const [showUpdatePrompt, setShowUpdatePrompt] = useState(false);
 
   // Authentication & Admin states
   const [user, setUser] = useState<AdminUser | null>(() => {
@@ -157,6 +158,8 @@ export default function App() {
           images: Array.isArray(item.images) ? item.images : [],
           videoUrl: item.videoUrl || "",
           isAvailable: item.isAvailable ?? true,
+          hidePrice: item.hidePrice ?? false,
+          isHidden: item.isHidden ?? false,
           views: Number(item.views) || 0,
           whatsappClicks: Number(item.whatsappClicks) || 0,
           createdAt: item.createdAt ? new Date(item.createdAt) : new Date(),
@@ -191,6 +194,8 @@ export default function App() {
         images: Array.isArray(item.images) ? item.images : [],
         videoUrl: item.videoUrl || "",
         isAvailable: item.isAvailable ?? true,
+        hidePrice: item.hidePrice ?? false,
+        isHidden: item.isHidden ?? false,
         views: Number(item.views) || 0,
         whatsappClicks: Number(item.whatsappClicks) || 0,
         createdAt: item.createdAt ? new Date(item.createdAt) : new Date(),
@@ -281,6 +286,55 @@ export default function App() {
     refreshAll();
   }, []);
 
+  // Real-time listener for products and config updates to trigger "update available" prompt
+  useEffect(() => {
+    let isInitialProducts = true;
+    let isInitialConfig = true;
+
+    // 1. Listen to products updates
+    const qProducts = query(collection(db, "products"));
+    const unsubProducts = onSnapshot(qProducts, (snapshot) => {
+      // The initial snapshot fires immediately. We want to skip it.
+      if (isInitialProducts) {
+        isInitialProducts = false;
+        return;
+      }
+      
+      // If there are only metadata changes or local writes, don't trigger the prompt
+      if (snapshot.metadata.hasPendingWrites) {
+        return;
+      }
+
+      console.log("[Firestore Listener] Se ha modificado un producto en Firestore");
+      setShowUpdatePrompt(true);
+    }, (err) => {
+      console.warn("[Firestore Listener] Error en listener de productos:", err);
+    });
+
+    // 2. Listen to storeConfig updates
+    const docConfig = doc(db, "storeConfig", "default");
+    const unsubConfig = onSnapshot(docConfig, (snapshot) => {
+      if (isInitialConfig) {
+        isInitialConfig = false;
+        return;
+      }
+
+      if (snapshot.metadata.hasPendingWrites) {
+        return;
+      }
+
+      console.log("[Firestore Listener] Se ha modificado la configuración de la tienda");
+      setShowUpdatePrompt(true);
+    }, (err) => {
+      console.warn("[Firestore Listener] Error en listener de configuración:", err);
+    });
+
+    return () => {
+      unsubProducts();
+      unsubConfig();
+    };
+  }, []);
+
   // Synchronize local cached products automatically in background when admin mounts the app
   useEffect(() => {
     const autoSyncCachedProducts = async () => {
@@ -312,6 +366,24 @@ export default function App() {
   }, [showAdminPanel, isUsingCache, products.length]);
 
   // Dynamically update browser tab title based on store configuration
+  const getAppCategories = (prodList: Product[], config: any) => {
+    if (config?.customCategories && Array.isArray(config.customCategories) && config.customCategories.length > 0) {
+      if (!user) {
+        // público: sólo listar categorías que realmente tengan productos visibles y activos
+        const visibleCategories = new Set(prodList.filter(p => !p.isHidden).map(p => p.category));
+        return ["Todos", ...config.customCategories.filter((cat: string) => visibleCategories.has(cat))];
+      }
+      return ["Todos", ...config.customCategories];
+    }
+    const filtered = user ? prodList : prodList.filter(p => !p.isHidden);
+    const cats = Array.from(new Set(filtered.map((item: Product) => item.category).filter(Boolean)));
+    return ["Todos", ...cats as string[]];
+  };
+
+  useEffect(() => {
+    setCategories(getAppCategories(products, storeConfig));
+  }, [products, storeConfig, user]);
+
   useEffect(() => {
     if (storeConfig && storeConfig.storeName) {
       document.title = storeConfig.storeName;
@@ -626,8 +698,8 @@ export default function App() {
 
   // Filter products by search bar input and category selections
   const filteredProducts = products.filter((prod) => {
-    // Hide out-of-stock items if config says so and the active visitor is not an administrative user
-    const isPublicFilteredOut = storeConfig.hideOutOfStock && !user && !prod.isAvailable;
+    // Hide out-of-stock items if config says so and the active visitor is not an administrative user; or if the item is explicitly hidden
+    const isPublicFilteredOut = (!user && prod.isHidden) || (storeConfig.hideOutOfStock && !user && !prod.isAvailable);
     if (isPublicFilteredOut) return false;
 
     const matchesCategory = selectedCategory === "Todos" || prod.category === selectedCategory;
@@ -1287,6 +1359,62 @@ export default function App() {
 
               </div>
             </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Dynamic real-time update notifier/banner */}
+      <AnimatePresence>
+        {showUpdatePrompt && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 50, scale: 0.95 }}
+            className="fixed bottom-6 inset-x-4 md:left-auto md:right-6 md:max-w-md z-50 pointer-events-none text-left"
+          >
+            <div className="bg-slate-900 border border-slate-800 text-white rounded-2xl shadow-2xl p-4.5 flex flex-col gap-3.5 relative overflow-hidden pointer-events-auto">
+              <div className="absolute right-0 top-0 translate-x-1/4 -translate-y-1/4 w-24 h-24 bg-amber-500/5 rounded-full pointer-events-none" />
+              <div className="flex items-start gap-3 relative">
+                <div className="p-2 bg-amber-500/15 text-amber-400 rounded-xl">
+                  <Sparkles size={18} className="animate-pulse" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h4 className="text-xs font-extrabold uppercase tracking-widest text-amber-400">¡Catálogo Actualizado!</h4>
+                  <p className="text-xs text-slate-300 leading-relaxed font-semibold mt-1">
+                    Se han realizado cambios o adiciones en este catálogo de productos.
+                  </p>
+                  <p className="text-[10px] text-slate-450 leading-normal mt-0.5">
+                    Actualiza la página para aplicar las novedades en tiempo real.
+                  </p>
+                </div>
+                <button 
+                  onClick={() => setShowUpdatePrompt(false)}
+                  className="p-1 text-slate-400 hover:text-slate-100 bg-slate-800/40 hover:bg-slate-850 rounded-lg transition-colors cursor-pointer"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+              <div className="flex gap-2 justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowUpdatePrompt(false)}
+                  className="px-3.5 py-1.5 text-[11px] font-bold text-slate-400 hover:text-white transition-colors cursor-pointer"
+                >
+                  Ignorar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowUpdatePrompt(false);
+                    window.location.reload();
+                  }}
+                  className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold text-[11px] uppercase tracking-wider rounded-xl shadow-md shadow-amber-500/10 flex items-center gap-1.5 group transition-all transform active:scale-98 cursor-pointer"
+                >
+                  <RefreshCw size={12} className="animate-spinGroup group-hover:rotate-180 transition-transform duration-500" />
+                  <span>Actualizar página</span>
+                </button>
+              </div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

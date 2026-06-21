@@ -68,7 +68,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
     resolvedText = resolvedText.replace(/{productSku}/gi, product.sku || "");
     resolvedText = resolvedText.replace(/{sku}/gi, product.sku || "");
     
-    const priceFormatted = product.retailPrice !== undefined && product.retailPrice !== null
+    const priceFormatted = showPrices && !product.hidePrice && product.retailPrice !== undefined && product.retailPrice !== null
       ? `$${product.retailPrice.toLocaleString()}`
       : "";
     resolvedText = resolvedText.replace(/{productPrice}/gi, priceFormatted);
@@ -201,7 +201,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
 
         {/* Prices Row */}
         <div className="mt-auto border-t border-slate-100/80 pt-3.5 flex flex-col gap-2">
-          {showPrices ? (
+          {showPrices && !product.hidePrice ? (
             <div className="flex justify-between items-end">
               <div>
                 <span className="block text-[9px] text-slate-400 font-extrabold uppercase tracking-widest leading-none mb-1">Unidad</span>
