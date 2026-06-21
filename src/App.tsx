@@ -23,6 +23,7 @@ import ProductDetailsModal from "./components/ProductDetailsModal";
 import AdminPanel from "./components/AdminPanel";
 import ShareCatalogModal from "./components/ShareCatalogModal";
 import StoreLocationSection from "./components/StoreLocationSection";
+import { CatalogSkeleton } from "./components/ProductSkeleton";
 import { motion, AnimatePresence } from "motion/react";
 
 const INITIAL_STORE_CONFIG: StoreConfig = {
@@ -119,45 +120,83 @@ export default function App() {
   // Fetch functions setting Google Cloud Firestore as the only primary source of truth
   const fetchProducts = async () => {
     try {
+      // 1. Intentar primero consultar directamente Firebase Firestore (Cliente) - Rápido, resiliente y 100% confiable
       const q = query(collection(db, "products"), orderBy("createdAt", "desc"));
       const querySnapshot = await getDocs(q);
-      const processedProducts: Product[] = [];
+      const data: any[] = [];
       querySnapshot.forEach((docSnap) => {
-        const data = docSnap.data();
-        processedProducts.push({
-          id: docSnap.id,
-          sku: data.sku || "",
-          name: data.name || "Sin nombre",
-          description: data.description || "",
-          category: data.category || "General",
-          retailPrice: Number(data.retailPrice) || 0,
-          wholesalePrice: Number(data.wholesalePrice) || 0,
-          images: data.images || [],
-          videoUrl: data.videoUrl || "",
-          isAvailable: data.isAvailable ?? true,
-          views: Number(data.views) || 0,
-          whatsappClicks: Number(data.whatsappClicks) || 0,
-          createdAt: data.createdAt ? new Date(data.createdAt) : new Date(),
-          updatedAt: data.updatedAt ? new Date(data.updatedAt) : new Date(),
-        } as Product);
+        data.push({ id: docSnap.id, ...docSnap.data() });
       });
+
+      if (data && data.length > 0) {
+        const processedProducts: Product[] = data.map((item: any) => ({
+          id: item.id,
+          sku: item.sku || "",
+          name: item.name || "Sin nombre",
+          description: item.description || "",
+          category: item.category || "General",
+          retailPrice: Number(item.retailPrice) || 0,
+          wholesalePrice: Number(item.wholesalePrice) || 0,
+          images: Array.isArray(item.images) ? item.images : [],
+          videoUrl: item.videoUrl || "",
+          isAvailable: item.isAvailable ?? true,
+          views: Number(item.views) || 0,
+          whatsappClicks: Number(item.whatsappClicks) || 0,
+          createdAt: item.createdAt ? new Date(item.createdAt) : new Date(),
+          updatedAt: item.updatedAt ? new Date(item.updatedAt) : new Date(),
+        }));
+
+        setIsUsingCache(false);
+        setProducts(processedProducts);
+        localStorage.setItem("local_products_cache", JSON.stringify(processedProducts));
+        const cats = Array.from(new Set(processedProducts.map((item: Product) => item.category).filter(Boolean)));
+        setCategories(["Todos", ...cats as string[]]);
+        return;
+      }
+    } catch (fsErr) {
+      console.warn("[Firebase Client] No se pudo conectar a Firestore de forma directa. Intentando proxy API:", fsErr);
+    }
+
+    try {
+      // 2. Fallback Secundario: API del servidor Backend con base de datos en nube o caché
+      const res = await fetch("/api/products");
+      if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+      const data = await res.json();
+      
+      const processedProducts: Product[] = data.map((item: any) => ({
+        id: item.id,
+        sku: item.sku || "",
+        name: item.name || "Sin nombre",
+        description: item.description || "",
+        category: item.category || "General",
+        retailPrice: Number(item.retailPrice) || 0,
+        wholesalePrice: Number(item.wholesalePrice) || 0,
+        images: Array.isArray(item.images) ? item.images : [],
+        videoUrl: item.videoUrl || "",
+        isAvailable: item.isAvailable ?? true,
+        views: Number(item.views) || 0,
+        whatsappClicks: Number(item.whatsappClicks) || 0,
+        createdAt: item.createdAt ? new Date(item.createdAt) : new Date(),
+        updatedAt: item.updatedAt ? new Date(item.updatedAt) : new Date(),
+      }));
 
       setIsUsingCache(false);
       setProducts(processedProducts);
       localStorage.setItem("local_products_cache", JSON.stringify(processedProducts));
       const cats = Array.from(new Set(processedProducts.map((item: Product) => item.category).filter(Boolean)));
-      setCategories(["Todos", ...cats]);
+      setCategories(["Todos", ...cats as string[]]);
       return;
     } catch (e) {
-      console.warn("No se pudo conectar a Firestore, intentando Caché local:", e);
+      console.warn("No se pudo conectar al endpoint API de productos, intentando Caché local:", e);
     }
 
-    // Fallback: static cache
+    // 3. Fallback Terciario: Caché estática del sistema de almacenamiento del navegador
     loadProductsStatically();
   };
 
   const fetchStoreConfig = async () => {
     try {
+      // 1. Intentar primero directo de Firestore (Cliente)
       const docRef = doc(db, "storeConfig", "default");
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
@@ -170,31 +209,42 @@ export default function App() {
           whatsappCustomMessage: data.whatsappCustomMessage || "",
           locationUrl: data.locationUrl || "",
           showPrices: data.showPrices ?? true,
+          storeImages: Array.isArray(data.storeImages) ? data.storeImages : [],
           updatedAt: data.updatedAt ? new Date(data.updatedAt) : new Date(),
         };
         setStoreConfig(configData);
         localStorage.setItem("local_store_config_cache", JSON.stringify(configData));
         return;
-      } else {
-        // Fallback or seed default config
-        const defaultDoc = {
-          storeName: "Mi Catálogo de WhatsApp",
-          address: "Av. Principal 123, Frente al Parque Comercial, La Paz",
-          phone: "591 76543210",
-          whatsappNumber: "59176543210",
-          whatsappCustomMessage: "¡Hola! Vi el artículo: {productName} (SKU: {productSku}) en tu catálogo virtual y me gustaría reservarlo.",
-          locationUrl: "https://maps.google.com/?q=-16.500000,-68.150000",
-          showPrices: true,
-          updatedAt: new Date().toISOString()
-        };
-        setStoreConfig(defaultDoc);
-        localStorage.setItem("local_store_config_cache", JSON.stringify(defaultDoc));
       }
-    } catch (e) {
-      console.warn("Error leyendo store-config de Firestore:", e);
+    } catch (fsErr) {
+      console.warn("[Firebase Client] No se pudo leer storeConfig de Firestore directamente. Intentando proxy API:", fsErr);
     }
 
-    // Fallback cache
+    try {
+      // 2. Fallback Secundario: API de servidor Backend
+      const res = await fetch("/api/store-config");
+      if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+      const data = await res.json();
+      
+      const configData: StoreConfig = {
+        storeName: data.storeName || "Mi Catálogo de WhatsApp",
+        address: data.address || "",
+        phone: data.phone || "",
+        whatsappNumber: data.whatsappNumber || "",
+        whatsappCustomMessage: data.whatsappCustomMessage || "",
+        locationUrl: data.locationUrl || "",
+        showPrices: data.showPrices ?? true,
+        storeImages: Array.isArray(data.storeImages) ? data.storeImages : [],
+        updatedAt: data.updatedAt ? new Date(data.updatedAt) : new Date(),
+      };
+      setStoreConfig(configData);
+      localStorage.setItem("local_store_config_cache", JSON.stringify(configData));
+      return;
+    } catch (e) {
+      console.warn("Error leyendo store-config desde el backend API:", e);
+    }
+
+    // 3. Fallback Terciario: Caché local persistente del navegador
     try {
       const saved = localStorage.getItem("local_store_config_cache");
       if (saved) {
@@ -297,37 +347,64 @@ export default function App() {
   // Dynamic metrics tracking
   const handleSelectProduct = async (product: Product) => {
     setSelectedProduct(product);
+    const newViews = (product.views || 0) + 1;
     
     // Increment view count locally first (instant UI update)
-    const updated = products.map(p => p.id === product.id ? { ...p, views: (p.views || 0) + 1 } : p);
+    const updated = products.map(p => p.id === product.id ? { ...p, views: newViews } : p);
     setProducts(updated);
     try {
       localStorage.setItem("local_products_cache", JSON.stringify(updated));
     } catch (e) {}
 
-    // Track in Google Cloud Firestore Directly
+    // Track on Firestore directly first (allowed by rules for open view/click updates)
     try {
-      const docRef = doc(db, "products", product.id);
-      await updateDoc(docRef, { views: (product.views || 0) + 1 });
+      await updateDoc(doc(db, "products", product.id), { views: newViews });
+    } catch (fsErr) {
+      console.warn("[Firebase Client] No se pudo guardar métrica de vista directamente en Firestore:", fsErr);
+    }
+
+    // Failback/Sync with REST API Server
+    try {
+      await fetch(`/api/products/${product.id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ views: newViews }),
+      });
     } catch (err) {
-      console.warn("Could not track view metrics in Firestore.", err);
+      console.warn("Could not track view metrics in backend API.", err);
     }
   };
 
   const handleWhatsAppInquiry = async (product: Product) => {
+    const newClicks = (product.whatsappClicks || 0) + 1;
+    
     // Increment click count locally first (instant UI update)
-    const updated = products.map(p => p.id === product.id ? { ...p, whatsappClicks: (p.whatsappClicks || 0) + 1 } : p);
+    const updated = products.map(p => p.id === product.id ? { ...p, whatsappClicks: newClicks } : p);
     setProducts(updated);
     try {
       localStorage.setItem("local_products_cache", JSON.stringify(updated));
     } catch (e) {}
 
-    // Track in Google Cloud Firestore Directly
+    // Track on Firestore directly first (allowed by rules)
     try {
-      const docRef = doc(db, "products", product.id);
-      await updateDoc(docRef, { whatsappClicks: (product.whatsappClicks || 0) + 1 });
+      await updateDoc(doc(db, "products", product.id), { whatsappClicks: newClicks });
+    } catch (fsErr) {
+      console.warn("[Firebase Client] No se pudo guardar métrica de clic directamente en Firestore:", fsErr);
+    }
+
+    // Failback/Sync with REST API Server
+    try {
+      await fetch(`/api/products/${product.id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ whatsappClicks: newClicks }),
+      });
     } catch (err) {
-      console.warn("Could not track WhatsApp click in Firestore.", err);
+      console.warn("Could not track WhatsApp click in backend API.", err);
     }
   };
 
@@ -497,10 +574,7 @@ export default function App() {
 
       {/* Dynamic Main Body render */}
       {loadingApp ? (
-        <div className="flex-grow flex flex-col items-center justify-center py-24 text-slate-400 gap-2">
-          <div className="w-8 h-8 rounded-full border-2 border-slate-200 border-t-amber-500 animate-spin"></div>
-          <span className="text-xs font-semibold uppercase tracking-widest text-slate-500 mt-2">Cargando Catálogo Oficial...</span>
-        </div>
+        <CatalogSkeleton />
       ) : showAdminPanel && user?.isAdmin ? (
         
         /* ADMIN PANEL INTERFACE VIEW */

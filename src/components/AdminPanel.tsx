@@ -741,8 +741,20 @@ export default function AdminPanel({
       localStorage.setItem("local_store_config_cache", JSON.stringify(updatedData));
     } catch (err) {}
 
+    // Save directly to Google Cloud Firestore first (Client SDK with user login representation)
     try {
-      // Save directly to Google Cloud Firestore through secure Server API
+      const fsPayload = {
+        ...updatedData,
+        updatedAt: updatedData.updatedAt ? updatedData.updatedAt.toISOString() : new Date().toISOString()
+      };
+      await setDoc(doc(db, "storeConfig", "default"), fsPayload);
+      console.log("[Firebase Client] Configuración de tienda guardada directamente en Firestore!");
+    } catch (fsErr: any) {
+      console.warn("[Firebase Client] Error escribiendo storeConfig directamente a Firestore:", fsErr.message);
+    }
+
+    try {
+      // Save directly to Google Cloud Firestore through secure Server API (as fallback and sync)
       const res = await fetch("/api/store-config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -885,8 +897,24 @@ export default function AdminPanel({
 
     setIsEditingProduct(false);
 
+    // Save directly to Google Cloud Firestore first (Client SDK)
     try {
-      // Save product directly to Google Cloud Firestore through Server API
+      const fsPayload = {
+        ...reqObj,
+        createdAt: reqObj.createdAt ? (reqObj.createdAt instanceof Date ? reqObj.createdAt.toISOString() : reqObj.createdAt) : undefined,
+        updatedAt: reqObj.updatedAt ? (reqObj.updatedAt instanceof Date ? reqObj.updatedAt.toISOString() : reqObj.updatedAt) : undefined,
+      };
+      if (!editingProductId) {
+        fsPayload.id = id;
+      }
+      await setDoc(doc(db, "products", editingProductId || id), fsPayload, { merge: true });
+      console.log("[Firebase Client] Producto guardado directamente en Firestore!");
+    } catch (fsErr: any) {
+      console.warn("[Firebase Client] Error escribiendo producto en Firestore:", fsErr.message);
+    }
+
+    try {
+      // Save product directly to Google Cloud Firestore through Server API (as fallback/sync)
       let res;
       if (editingProductId) {
         res = await fetch(`/api/products/${editingProductId}`, {
@@ -935,8 +963,16 @@ export default function AdminPanel({
       localStorage.setItem("local_products_cache", JSON.stringify(updatedProductsList));
     } catch (e) {}
 
+    // Delete directly from Firestore first (Client SDK)
     try {
-      // Delete from Firestore directly through Server API
+      await deleteDoc(doc(db, "products", id));
+      console.log("[Firebase Client] Producto eliminado directamente de Firestore!");
+    } catch (fsErr: any) {
+      console.warn("[Firebase Client] Error eliminando producto directamente de Firestore:", fsErr.message);
+    }
+
+    try {
+      // Delete from Firestore directly through Server API (as fallback)
       const res = await fetch(`/api/products/${id}`, {
         method: "DELETE"
       });
