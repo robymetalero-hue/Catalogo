@@ -9,9 +9,10 @@ import { StoreConfig } from "../types";
 interface StoreFooterProps {
   storeConfig: StoreConfig;
   onOpenLocation: () => void;
+  onOpenLogin: () => void;
 }
 
-export default function StoreFooter({ storeConfig, onOpenLocation }: StoreFooterProps) {
+export default function StoreFooter({ storeConfig, onOpenLocation, onOpenLogin }: StoreFooterProps) {
   const getWhatsAppLink = () => {
     const cleanPhone = storeConfig.whatsappNumber || "59100000000";
     const msg = encodeURIComponent("¡Hola! Estaba viendo tu catálogo virtual y me gustaría hacer una consulta general.");
@@ -94,8 +95,22 @@ export default function StoreFooter({ storeConfig, onOpenLocation }: StoreFooter
         </div>
 
         {/* Bottom copyright and status disclosures */}
-        <div className="pt-6 flex flex-col sm:flex-row sm:items-center sm:justify-between text-[11px] text-slate-500 gap-4">
-          <span>&copy; {new Date().getFullYear()} {storeConfig.storeName || "Mi Tienda Virtual"}. Todos los derechos reservados.</span>
+        <div className="pt-6 flex flex-col sm:flex-row sm:items-center sm:justify-between text-[11px] text-slate-500 gap-4 select-none">
+          <span 
+            onDoubleClick={onOpenLogin}
+            title="Doble clic para administrador" 
+            className="cursor-default"
+          >
+            &copy; {new Date().getFullYear()} {storeConfig.storeName || "Mi Tienda Virtual"}. Todos los derechos reservados
+            <button
+              onClick={onOpenLogin}
+              type="button"
+              className="text-[#64748b] bg-transparent border-0 p-0 ml-0.5 focus:outline-hidden inline font-semibold text-[11px] transition-colors focus:ring-1 focus:ring-slate-800 rounded px-1 active:scale-95 cursor-default hover:text-amber-500/20"
+              style={{ contentVisibility: "auto", cursor: "default" }}
+            >
+              .
+            </button>
+          </span>
           <div className="flex items-center gap-1.5 bg-slate-855 px-2.5 py-1 rounded-md text-slate-400">
             <Info size={12} />
             <span>Los clientes no realizan pagos directamente en este catálogo. Completa tu orden por WhatsApp.</span>

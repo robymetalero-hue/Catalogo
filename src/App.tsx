@@ -336,6 +336,28 @@ export default function App() {
     }
   }, []);
 
+  // Check URL params for hidden login triggers (?admin=true or ?login=true or #admin)
+  useEffect(() => {
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (
+        urlParams.get("admin") === "true" || 
+        urlParams.get("login") === "true" || 
+        window.location.hash === "#admin" || 
+        window.location.hash === "#login"
+      ) {
+        setLocalLoginError(null);
+        setRecoveryMode("login");
+        setShowLoginModal(true);
+        // Clean URL parameters softly
+        const cleanUrl = window.location.protocol + "//" + window.location.host + window.location.pathname;
+        window.history.replaceState({ path: cleanUrl }, "", cleanUrl);
+      }
+    } catch (e) {
+      console.warn("Could not check url query params for login:", e);
+    }
+  }, []);
+
   // Helper: Static loading if listener fails due to offline/permission
   const loadProductsStatically = async () => {
     try {
@@ -622,15 +644,15 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-800 antialiased selection:bg-amber-100 selection:text-amber-900">
       
-      {/* Top micro administrative action bar */}
-      <div className="w-full bg-slate-900 py-1.5 px-4 sm:px-6 lg:px-8 text-white flex justify-between items-center text-xs">
-        <div className="flex items-center gap-1.5 grayscale-20 opacity-80 font-medium">
-          <ShoppingBag size={13} className="text-amber-500 animate-pulse" />
-          <span>Ingreso para administración de tu tienda</span>
-        </div>
+      {/* Top micro administrative action bar - Visible ONLY when logged in to let catalog be 100% protagonist */}
+      {user && (
+        <div className="w-full bg-slate-900 py-1.5 px-4 sm:px-6 lg:px-8 text-white flex justify-between items-center text-xs">
+          <div className="flex items-center gap-1.5 grayscale-20 opacity-80 font-medium">
+            <ShoppingBag size={13} className="text-amber-500 animate-pulse" />
+            <span>Ingreso para administración de tu tienda</span>
+          </div>
 
-        <div className="flex items-center gap-2">
-          {user ? (
+          <div className="flex items-center gap-2">
             <div className="flex items-center gap-2.5">
               <span className="opacity-80">
                 Hola, <strong className="font-semibold text-amber-500">{user.displayName || user.email}</strong>
@@ -655,21 +677,9 @@ export default function App() {
                 <span>Salir</span>
               </button>
             </div>
-          ) : (
-            <button
-              onClick={() => {
-                setAuthError(null);
-                setLocalLoginError(null);
-                setShowLoginModal(true);
-              }}
-              className="flex items-center gap-1 bg-slate-800 hover:bg-slate-700 border border-slate-750 px-2.5 py-1 rounded-md text-amber-500 font-semibold transition-all hover:scale-102 cursor-pointer"
-            >
-              <Lock size={11} />
-              <span>Ingresar como Admin</span>
-            </button>
-          )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Dynamic Promo Banner Ribbon */}
       {storeConfig.promoBannerText && storeConfig.promoBannerText.trim() && (
@@ -923,6 +933,11 @@ export default function App() {
           <StoreFooter
             storeConfig={storeConfig}
             onOpenLocation={handleOpenGoogleMaps}
+            onOpenLogin={() => {
+              setLocalLoginError(null);
+              setRecoveryMode("login");
+              setShowLoginModal(true);
+            }}
           />
         </>
       )}

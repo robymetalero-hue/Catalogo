@@ -16,6 +16,7 @@ interface StoreHeaderProps {
   onSearchChange: (query: string) => void;
   onOpenLocation: () => void;
   onOpenShare: () => void;
+  onOpenLogin?: () => void;
 }
 
 export default function StoreHeader({
@@ -27,6 +28,7 @@ export default function StoreHeader({
   onSearchChange,
   onOpenLocation,
   onOpenShare,
+  onOpenLogin,
 }: StoreHeaderProps) {
   const isCompact = storeConfig.bannerStyle === "compact";
 
@@ -75,8 +77,9 @@ export default function StoreHeader({
           {/* Logo & Store Name */}
           <div className="flex items-center gap-3">
             <motion.div 
+              onDoubleClick={onOpenLogin}
               whileHover={{ rotate: 5, scale: 1.05 }}
-              className={`${isCompact ? "w-10 h-10 rounded-xl" : "w-12 h-12 rounded-2xl"} bg-slate-950 border border-slate-800 text-white flex items-center justify-center shadow-lg shrink-0`}
+              className={`${isCompact ? "w-10 h-10 rounded-xl" : "w-12 h-12 rounded-2xl"} bg-slate-950 border border-slate-800 text-white flex items-center justify-center shadow-lg shrink-0 cursor-default select-none`}
             >
               <Store size={isCompact ? 18 : 22} className="text-amber-400" />
             </motion.div>
