@@ -14,7 +14,7 @@ import {
   collection, getDocs, doc, getDoc, updateDoc, query, orderBy, setDoc 
 } from "firebase/firestore";
 import { 
-  Lock, LogOut, CheckCircle2, ShoppingBag, Grid, Compass, Smartphone, AlertCircle, X, ShieldAlert, Share2, Sparkles
+  Lock, LogOut, CheckCircle2, ShoppingBag, Grid, Compass, Smartphone, AlertCircle, X, ShieldAlert, Share2, Sparkles, HelpCircle, Send, ArrowLeft
 } from "lucide-react";
 import StoreHeader from "./components/StoreHeader";
 import StoreFooter from "./components/StoreFooter";
@@ -123,6 +123,16 @@ export default function App() {
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [localLoginError, setLocalLoginError] = useState<string | null>(null);
+
+  // Custom Account Recovery states
+  const [recoveryMode, setRecoveryMode] = useState<"login" | "find-username" | "answer-question">("login");
+  const [recoveryUsername, setRecoveryUsername] = useState("");
+  const [recoveryQuestion, setRecoveryQuestion] = useState("");
+  const [recoveryAnswer, setRecoveryAnswer] = useState("");
+  const [recoveryNewPassword, setRecoveryNewPassword] = useState("");
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const [recoverySuccess, setRecoverySuccess] = useState<string | null>(null);
+  const [recoveryLoading, setRecoveryLoading] = useState(false);
 
   // Fetch functions setting Google Cloud Firestore as the only primary source of truth
   const fetchProducts = async () => {
@@ -480,6 +490,95 @@ export default function App() {
       setLocalLoginError("Fallo al iniciar sesión en el servidor: " + err.message);
     } finally {
       setLoadingApp(false);
+    }
+  };
+
+  const handleFindUsername = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRecoveryError(null);
+    setRecoverySuccess(null);
+    const cleanUser = recoveryUsername.trim();
+
+    if (!cleanUser) {
+      setRecoveryError("Por favor ingresa tu usuario o correo.");
+      return;
+    }
+
+    setRecoveryLoading(true);
+    try {
+      const res = await fetch("/api/auth/recovery-question", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: cleanUser })
+      });
+
+      if (!res.ok) {
+        const errData = await res.json();
+        setRecoveryError(errData.error || "No se pudo recuperar la pregunta de seguridad.");
+        return;
+      }
+
+      const data = await res.json();
+      setRecoveryQuestion(data.preguntaSeguridad);
+      setRecoveryMode("answer-question");
+    } catch (err: any) {
+      setRecoveryError("Fallo de conexión con el servidor: " + err.message);
+    } finally {
+      setRecoveryLoading(false);
+    }
+  };
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRecoveryError(null);
+    setRecoverySuccess(null);
+    const cleanUser = recoveryUsername.trim();
+    const cleanAnswer = recoveryAnswer.trim();
+    const cleanNewPass = recoveryNewPassword.trim();
+
+    if (!cleanUser || !cleanAnswer || !cleanNewPass) {
+      setRecoveryError("Por favor completa todos los campos.");
+      return;
+    }
+
+    if (cleanNewPass.length < 4) {
+      setRecoveryError("La nueva contraseña debe tener al menos 4 caracteres por seguridad.");
+      return;
+    }
+
+    setRecoveryLoading(true);
+    try {
+      const res = await fetch("/api/auth/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: cleanUser,
+          answer: cleanAnswer,
+          newPassword: cleanNewPass
+        })
+      });
+
+      if (!res.ok) {
+        const errData = await res.json();
+        setRecoveryError(errData.error || "Error al restablecer la contraseña.");
+        return;
+      }
+
+      setRecoverySuccess("¡Contraseña restablecida exitosamente! Ya puedes iniciar sesión con tu nueva contraseña.");
+      setLoginEmail(cleanUser);
+      setLoginPassword("");
+      
+      // Limpiar campos de recuperación
+      setRecoveryAnswer("");
+      setRecoveryNewPassword("");
+      setTimeout(() => {
+        setRecoveryMode("login");
+        setRecoverySuccess(null);
+      }, 3500);
+    } catch (err: any) {
+      setRecoveryError("Fallo de conexión con el servidor: " + err.message);
+    } finally {
+      setRecoveryLoading(false);
     }
   };
 
@@ -868,7 +967,12 @@ export default function App() {
           >
             {/* Backdrop click dismiss handler card */}
             <div
-              onClick={() => setShowLoginModal(false)}
+              onClick={() => {
+                setShowLoginModal(false);
+                setRecoveryMode("login");
+                setRecoveryError(null);
+                setRecoverySuccess(null);
+              }}
               className="absolute inset-0"
             />
 
@@ -883,7 +987,12 @@ export default function App() {
               {/* Header */}
               <div className="bg-slate-900 p-6 text-white relative">
                 <button
-                  onClick={() => setShowLoginModal(false)}
+                  onClick={() => {
+                    setShowLoginModal(false);
+                    setRecoveryMode("login");
+                    setRecoveryError(null);
+                    setRecoverySuccess(null);
+                  }}
                   className="absolute right-4 top-4 text-slate-400 hover:text-white p-1 rounded-full hover:bg-slate-800 transition-all cursor-pointer"
                 >
                   <X size={18} />
@@ -901,51 +1010,226 @@ export default function App() {
               {/* Login Options / Form */}
               <div className="p-6 space-y-6">
                 
-                {/* Method 1: Password Form */}
-                <form onSubmit={handlePasswordLogin} className="space-y-4">
-                  <div className="border-b border-slate-100 pb-3 mb-2">
-                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Método 1: Contraseña de Acceso</span>
-                    <span className="text-[10px] text-slate-500 block mt-0.5">La opción oficial ideal y confiable para su propio dominio.</span>
-                  </div>
-
-                  {localLoginError && (
-                    <div className="p-3 bg-rose-50 border border-rose-100 text-rose-700 rounded-xl text-xs font-medium flex items-start gap-2">
-                      <ShieldAlert size={14} className="shrink-0 mt-0.5" />
-                      <span>{localLoginError}</span>
+                {recoveryMode === "login" ? (
+                  /* Method 1: Password Form */
+                  <form onSubmit={handlePasswordLogin} className="space-y-4">
+                    <div className="border-b border-slate-100 pb-3 mb-2">
+                      <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Método 1: Contraseña de Acceso</span>
+                      <span className="text-[10px] text-slate-500 block mt-0.5">La opción oficial ideal y confiable para su propio dominio.</span>
                     </div>
-                  )}
 
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Usuario o Correo</label>
-                    <input
-                      type="text"
-                      value={loginEmail}
-                      onChange={(e) => setLoginEmail(e.target.value)}
-                      placeholder="Ej. admin o tu correo"
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-500/25 focus:border-amber-500 font-medium text-slate-800"
-                      required
-                    />
-                  </div>
+                    {localLoginError && (
+                      <div className="p-3 bg-rose-50 border border-rose-100 text-rose-700 rounded-xl text-xs font-medium flex items-start gap-2">
+                        <ShieldAlert size={14} className="shrink-0 mt-0.5" />
+                        <span>{localLoginError}</span>
+                      </div>
+                    )}
 
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Contraseña</label>
-                    <input
-                      type="password"
-                      value={loginPassword}
-                      onChange={(e) => setLoginPassword(e.target.value)}
-                      placeholder="Introduce tu contraseña"
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-500/25 focus:border-amber-500 font-medium text-slate-805"
-                      required
-                    />
-                  </div>
+                    {recoverySuccess && (
+                      <div className="p-3 bg-emerald-50 border border-emerald-100 text-emerald-800 rounded-xl text-xs font-medium flex items-start gap-2">
+                        <CheckCircle2 size={14} className="shrink-0 mt-0.5" />
+                        <span>{recoverySuccess}</span>
+                      </div>
+                    )}
 
-                  <button
-                    type="submit"
-                    className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl text-xs uppercase tracking-wider transition-all hover:shadow-lg hover:shadow-amber-500/20 active:scale-98 cursor-pointer"
-                  >
-                    Ingresar al Sistema
-                  </button>
-                </form>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Usuario o Correo</label>
+                      <input
+                        type="text"
+                        value={loginEmail}
+                        onChange={(e) => setLoginEmail(e.target.value)}
+                        placeholder="Ej. admin o tu correo"
+                        className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-500/25 focus:border-amber-500 font-medium text-slate-800"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Contraseña</label>
+                      <input
+                        type="password"
+                        value={loginPassword}
+                        onChange={(e) => setLoginPassword(e.target.value)}
+                        placeholder="Introduce tu contraseña"
+                        className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-500/25 focus:border-amber-500 font-medium text-slate-805"
+                        required
+                      />
+                      
+                      {/* Password recovery link */}
+                      <div className="flex justify-end mt-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRecoveryMode("find-username");
+                            setRecoveryUsername(loginEmail);
+                            setRecoveryError(null);
+                            setRecoverySuccess(null);
+                          }}
+                          className="text-[11.5px] text-amber-600 hover:text-amber-700 hover:underline font-semibold cursor-pointer border-0 bg-transparent p-0"
+                        >
+                          ¿Olvidaste tu contraseña o usuario?
+                        </button>
+                      </div>
+                    </div>
+
+                    <button
+                      type="submit"
+                      className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl text-xs uppercase tracking-wider transition-all hover:shadow-lg hover:shadow-amber-500/20 active:scale-98 cursor-pointer"
+                    >
+                      Ingresar al Sistema
+                    </button>
+                  </form>
+                ) : recoveryMode === "find-username" ? (
+                  /* Form to ask for username and get security question */
+                  <form onSubmit={handleFindUsername} className="space-y-4">
+                    <div className="border-b border-slate-100 pb-3 mb-2 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRecoveryMode("login");
+                          setRecoveryError(null);
+                        }}
+                        className="p-1 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-700 transition cursor-pointer"
+                        title="Volver"
+                      >
+                        <ArrowLeft size={16} />
+                      </button>
+                      <div>
+                        <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Recuperar Acceso</span>
+                        <span className="text-[10px] text-slate-400 block">Paso 1: Identificación de Cuenta</span>
+                      </div>
+                    </div>
+                    
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      Escribe tu nombre de usuario o correo. Buscaremos tu pregunta de seguridad registrada.
+                    </p>
+
+                    {recoveryError && (
+                      <div className="p-3 bg-rose-50 border border-rose-100 text-rose-700 rounded-xl text-xs font-medium space-y-2.5">
+                        <div className="flex items-start gap-2">
+                          <ShieldAlert size={14} className="shrink-0 mt-0.5" />
+                          <span>{recoveryError}</span>
+                        </div>
+                        
+                        {/* WhatsApp support recovery trigger */}
+                        <div className="pt-2 border-t border-rose-200/50 flex flex-col gap-1">
+                          <span className="text-[10px] text-rose-600 block font-semibold">¿No tienes tus datos o auto-recuperación activa?</span>
+                          <a
+                            href={`https://wa.me/${storeConfig.whatsappNumber || "59100000000"}?text=${encodeURIComponent(
+                              `Hola Administrador, olvidé mis datos de acceso para mi cuenta del catálogo virtual. Por favor, ¿podrías ayudarme a restablecer mi usuario de acceso "${recoveryUsername || "(No especificado)"}"?`
+                            )}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="self-start inline-flex items-center gap-1.5 text-[10px] bg-emerald-500 hover:bg-emerald-600 active:scale-98 text-white font-bold py-1.5 px-3 rounded-lg transition-all shadow-xs"
+                          >
+                            <svg className="w-3.5 h-3.5 fill-white" viewBox="0 0 24 24">
+                              <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.002 5.348 5.352 0 12.003 0c3.225.002 6.258 1.258 8.537 3.541 2.279 2.28 3.532 5.314 3.53 8.541-.005 6.655-5.356 12.003-12.007 12.003-1.996-.001-3.957-.492-5.717-1.428L0 24zm6.59-4.846c1.6.95 3.18 1.448 4.815 1.449 5.518 0 10.003-4.484 10.007-10.002.002-2.673-1.04-5.186-2.935-7.079-1.895-1.893-4.41-2.933-7.085-2.936-5.521 0-10.005 4.484-10.01 10.002-.001 1.83.479 3.619 1.393 5.176l-.101.488-.936 3.42 3.506-.92.466.277z"/>
+                            </svg>
+                            Restablecer con ayuda de Soporte por WhatsApp
+                          </a>
+                        </div>
+                      </div>
+                    )}
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Nombre de Usuario o Correo</label>
+                      <input
+                        type="text"
+                        value={recoveryUsername}
+                        onChange={(e) => setRecoveryUsername(e.target.value)}
+                        placeholder="Ej. ana12 o tu correo"
+                        className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-500/25 focus:border-amber-500 font-medium text-slate-800"
+                        required
+                      />
+                    </div>
+
+                    <div className="flex gap-2.5 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRecoveryMode("login");
+                          setRecoveryError(null);
+                        }}
+                        className="w-1/3 py-2 border border-slate-250 bg-white hover:bg-slate-50 text-slate-700 font-semibold rounded-xl text-xs uppercase transition-all cursor-pointer"
+                      >
+                        Atrás
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={recoveryLoading}
+                        className="w-2/3 py-2 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl text-xs uppercase tracking-wider transition-all cursor-pointer"
+                      >
+                        {recoveryLoading ? "Verificando..." : "Siguiente paso"}
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  /* Form to write answer and safe change password */
+                  <form onSubmit={handleResetPassword} className="space-y-4">
+                    <div className="border-b border-slate-100 pb-3 mb-2 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRecoveryMode("find-username");
+                          setRecoveryError(null);
+                        }}
+                        className="p-1 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-700 transition cursor-pointer"
+                        title="Volver"
+                      >
+                        <ArrowLeft size={16} />
+                      </button>
+                      <div>
+                        <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Responder Pregunta</span>
+                        <span className="text-[10px] text-slate-400 block">Paso 2: Responder para Restablecer</span>
+                      </div>
+                    </div>
+
+                    {recoveryError && (
+                      <div className="p-3 bg-rose-50 border border-rose-100/70 text-rose-700 rounded-xl text-xs font-medium flex items-start gap-2">
+                        <ShieldAlert size={14} className="shrink-0 mt-0.5" />
+                        <span>{recoveryError}</span>
+                      </div>
+                    )}
+
+                    <div className="p-3.5 bg-slate-50 border border-slate-100 rounded-xl space-y-1">
+                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">Pregunta de Seguridad Registrada</span>
+                      <p className="text-xs font-bold text-slate-800 leading-normal">{recoveryQuestion}</p>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Escribe tu Respuesta Secreta</label>
+                      <input
+                        type="text"
+                        value={recoveryAnswer}
+                        onChange={(e) => setRecoveryAnswer(e.target.value)}
+                        placeholder="La respuesta no distingue mayúsculas"
+                        className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-500/25 focus:border-amber-500 font-medium text-slate-800"
+                        required
+                        autoFocus
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Nueva Contraseña para tu Cuenta</label>
+                      <input
+                        type="password"
+                        value={recoveryNewPassword}
+                        onChange={(e) => setRecoveryNewPassword(e.target.value)}
+                        placeholder="Mínimo 4 caracteres"
+                        className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-500/25 focus:border-amber-500 font-medium text-slate-800"
+                        required
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={recoveryLoading}
+                      className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-xl text-xs uppercase tracking-wider transition-all hover:shadow-lg hover:shadow-emerald-500/20 active:scale-98 cursor-pointer"
+                    >
+                      {recoveryLoading ? "Actualizando..." : "Restablecer e Ingresar"}
+                    </button>
+                  </form>
+                )}
 
                 {/* Divider */}
                 <div className="relative flex items-center justify-center my-4">

@@ -57,9 +57,24 @@ const ProductCard: React.FC<ProductCardProps> = ({
   const getWhatsAppLink = () => {
     const cleanPhone = whatsappNumber?.replace(/[^0-9]/g, "") || "59100000000"; // default fallback or simple number
     const customText = whatsappCustomMessage || "Hola! Estoy interesado en el producto: {productName} (SKU: {productSku})";
-    const resolvedText = customText
-      .replace("{productName}", product.name)
-      .replace("{productSku}", product.sku);
+    
+    // Support a wide variety of placeholder names for maximum flexibility
+    let resolvedText = customText;
+    
+    // Use regex with 'i' (case-insensitive) and 'g' (global) to match any user configuration
+    resolvedText = resolvedText.replace(/{productName}/gi, product.name);
+    resolvedText = resolvedText.replace(/{name}/gi, product.name);
+    
+    resolvedText = resolvedText.replace(/{productSku}/gi, product.sku || "");
+    resolvedText = resolvedText.replace(/{sku}/gi, product.sku || "");
+    
+    const priceFormatted = product.retailPrice !== undefined && product.retailPrice !== null
+      ? `$${product.retailPrice.toLocaleString()}`
+      : "";
+    resolvedText = resolvedText.replace(/{productPrice}/gi, priceFormatted);
+    resolvedText = resolvedText.replace(/{price}/gi, priceFormatted);
+    resolvedText = resolvedText.replace(/{precio}/gi, priceFormatted);
+
     return `https://wa.me/${cleanPhone}?text=${encodeURIComponent(resolvedText)}`;
   };
 

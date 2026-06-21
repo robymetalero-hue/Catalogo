@@ -395,6 +395,76 @@ async function startServer() {
     }
   });
 
+  // Recuperar pregunta de seguridad de un usuario para auto-recuperación
+  app.post("/api/auth/recovery-question", async (req, res) => {
+    try {
+      const { username } = req.body;
+      if (!username) {
+        return res.status(400).json({ error: "El nombre de usuario o correo de la cuenta es requerido." });
+      }
+
+      const cleanUser = username.trim().toLowerCase();
+      const usersCol = firestoreDb.collection("users");
+      const querySnapshot = await usersCol.where("username", "==", cleanUser).get();
+
+      if (querySnapshot.empty) {
+        return res.status(404).json({ error: "El usuario ingresado no existe en el sistema o no cuenta con soporte de auto-recuperación activa." });
+      }
+
+      const userData = querySnapshot.docs[0].data();
+      if (!userData.preguntaSeguridad) {
+        return res.status(404).json({ error: "Esta cuenta no cuenta con una pregunta de seguridad configurada. Por favor, solicita ayuda de restauración por WhatsApp a tu administrador." });
+      }
+
+      return res.json({ preguntaSeguridad: userData.preguntaSeguridad });
+    } catch (error: any) {
+      console.error("Error al recuperar la pregunta de seguridad:", error);
+      return res.status(500).json({ error: "Error de servidor al recuperar pregunta de seguridad: " + (error.message || error) });
+    }
+  });
+
+  // Restablecer contraseña respondiendo la pregunta de seguridad
+  app.post("/api/auth/reset-password", async (req, res) => {
+    try {
+      const { username, answer, newPassword } = req.body;
+      if (!username || !answer || !newPassword) {
+        return res.status(400).json({ error: "Todos los campos (Usuario, respuesta y nueva contraseña) son requeridos." });
+      }
+
+      const cleanUser = username.trim().toLowerCase();
+      const cleanAnswer = answer.trim().toLowerCase();
+      
+      const usersCol = firestoreDb.collection("users");
+      const querySnapshot = await usersCol.where("username", "==", cleanUser).get();
+
+      if (querySnapshot.empty) {
+        return res.status(404).json({ error: "El usuario no fue localizado." });
+      }
+
+      const userDoc = querySnapshot.docs[0];
+      const userData = userDoc.data();
+
+      if (!userData.respuestaSeguridad) {
+        return res.status(400).json({ error: "Este usuario no tiene configurada una respuesta de seguridad para auto-servicio." });
+      }
+
+      if (userData.respuestaSeguridad.trim().toLowerCase() !== cleanAnswer) {
+        return res.status(401).json({ error: "Respuesta incorrecta. Por favor vuelve a intentarlo o solicita restablecimiento a tu administrador." });
+      }
+
+      await usersCol.doc(userDoc.id).update({
+        password: newPassword.trim(),
+        updatedAt: new Date().toISOString()
+      });
+
+      console.log(`[Users Backend] Contraseña de usuario "${cleanUser}" restablecida mediante pregunta de seguridad.`);
+      return res.json({ success: true, message: "La contraseña ha sido actualizada con éxito." });
+    } catch (error: any) {
+      console.error("Error al restablecer contraseña:", error);
+      return res.status(500).json({ error: "Error de servidor al restablecer contraseña: " + (error.message || error) });
+    }
+  });
+
   // Obtener lista de usuarios (solo para administración)
   app.get("/api/users", requireAdmin, async (req, res) => {
     try {
@@ -407,6 +477,8 @@ async function startServer() {
           name: d.name,
           role: d.role || "Vendedor",
           password: d.password,
+          preguntaSeguridad: d.preguntaSeguridad || "",
+          respuestaSeguridad: d.respuestaSeguridad || "",
           createdAt: d.createdAt,
           updatedAt: d.updatedAt
         };
@@ -421,7 +493,7 @@ async function startServer() {
   // Crear nuevo usuario
   app.post("/api/users", requireAdmin, async (req, res) => {
     try {
-      const { username, password, name, role } = req.body;
+      const { username, password, name, role, preguntaSeguridad, respuestaSeguridad } = req.body;
       if (!username || !password || !name) {
         return res.status(400).json({ error: "El nombre, el usuario/correo y la contraseña son obligatorios." });
       }
@@ -441,6 +513,8 @@ async function startServer() {
         password: password.trim(),
         name: name.trim(),
         role: role || "Vendedor",
+        preguntaSeguridad: preguntaSeguridad ? preguntaSeguridad.trim() : "",
+        respuestaSeguridad: respuestaSeguridad ? respuestaSeguridad.trim().toLowerCase() : "",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
@@ -458,7 +532,7 @@ async function startServer() {
   app.put("/api/users/:id", requireAdmin, async (req, res) => {
     try {
       const { id } = req.params;
-      const { username, password, name, role } = req.body;
+      const { username, password, name, role, preguntaSeguridad, respuestaSeguridad } = req.body;
       const docRef = firestoreDb.collection("users").doc(id);
       const docSnap = await docRef.get();
 
@@ -489,6 +563,12 @@ async function startServer() {
       }
       if (role !== undefined) {
         updateData.role = role;
+      }
+      if (preguntaSeguridad !== undefined) {
+        updateData.preguntaSeguridad = preguntaSeguridad.trim();
+      }
+      if (respuestaSeguridad !== undefined) {
+        updateData.respuestaSeguridad = respuestaSeguridad.trim().toLowerCase();
       }
       updateData.updatedAt = new Date().toISOString();
 

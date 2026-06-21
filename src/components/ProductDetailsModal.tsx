@@ -39,6 +39,26 @@ export default function ProductDetailsModal({
     }
   }, [activeImageIndex, isPlayingVideo, product.id]);
 
+  // Lock background scroll when modal is open and handle Escape key to close
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    };
+    
+    // Prevent scrolling
+    const originalStyle = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    
+    window.addEventListener("keydown", handleKeyDown);
+    
+    return () => {
+      document.body.style.overflow = originalStyle;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose]);
+
   const images = product.images && product.images.filter(img => img && img.trim() !== "").length > 0 
     ? product.images.filter(img => img && img.trim() !== "") 
     : ["https://images.unsplash.com/photo-1544816155-12df9643f363?q=80&w=600&auto=format&fit=crop"];
@@ -69,9 +89,24 @@ export default function ProductDetailsModal({
   const getWhatsAppLink = () => {
     const cleanPhone = whatsappNumber?.replace(/[^0-9]/g, "") || "59100000000";
     const customText = whatsappCustomMessage || "Hola! Estoy interesado en el producto: {productName} (SKU: {productSku})";
-    const resolvedText = customText
-      .replace("{productName}", product.name)
-      .replace("{productSku}", product.sku);
+    
+    // Support a wide variety of placeholder names for maximum flexibility
+    let resolvedText = customText;
+    
+    // Use regex with 'i' (case-insensitive) and 'g' (global) to match any user configuration
+    resolvedText = resolvedText.replace(/{productName}/gi, product.name);
+    resolvedText = resolvedText.replace(/{name}/gi, product.name);
+    
+    resolvedText = resolvedText.replace(/{productSku}/gi, product.sku || "");
+    resolvedText = resolvedText.replace(/{sku}/gi, product.sku || "");
+    
+    const priceFormatted = product.retailPrice !== undefined && product.retailPrice !== null
+      ? `$${product.retailPrice.toLocaleString()}`
+      : "";
+    resolvedText = resolvedText.replace(/{productPrice}/gi, priceFormatted);
+    resolvedText = resolvedText.replace(/{price}/gi, priceFormatted);
+    resolvedText = resolvedText.replace(/{precio}/gi, priceFormatted);
+
     return `https://wa.me/${cleanPhone}?text=${encodeURIComponent(resolvedText)}`;
   };
 
@@ -98,10 +133,10 @@ export default function ProductDetailsModal({
           onClick={onClose}
           whileHover={{ scale: 1.1, backgroundColor: "#f1f5f9" }}
           whileTap={{ scale: 0.9 }}
-          className="absolute right-5 top-5 z-20 p-2.5 text-slate-400 hover:text-slate-800 bg-slate-50 border border-slate-100 shadow-3xs rounded-full transition-colors"
+          className="absolute right-4 top-4 md:right-5 md:top-5 z-[100] p-2.5 text-slate-700 hover:text-slate-900 bg-white border border-slate-200/80 shadow-md rounded-full transition-all cursor-pointer"
           aria-label="Cerrar modal"
         >
-          <X size={18} />
+          <X size={20} />
         </motion.button>
 
         {/* Scrollable Content Container */}

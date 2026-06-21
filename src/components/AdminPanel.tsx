@@ -67,6 +67,8 @@ export default function AdminPanel({
   const [userFormUsername, setUserFormUsername] = useState("");
   const [userFormPassword, setUserFormPassword] = useState("");
   const [userFormRole, setUserFormRole] = useState("Vendedor");
+  const [userFormPregunta, setUserFormPregunta] = useState("");
+  const [userFormRespuesta, setUserFormRespuesta] = useState("");
 
   const fetchUsers = async () => {
     setLoadingUsers(true);
@@ -99,6 +101,8 @@ export default function AdminPanel({
     setUserFormUsername("");
     setUserFormPassword("");
     setUserFormRole("Vendedor");
+    setUserFormPregunta("");
+    setUserFormRespuesta("");
     setIsEditingUser(true);
   };
 
@@ -108,6 +112,8 @@ export default function AdminPanel({
     setUserFormUsername(u.username);
     setUserFormPassword(u.password || "");
     setUserFormRole(u.role || "Vendedor");
+    setUserFormPregunta(u.preguntaSeguridad || "");
+    setUserFormRespuesta(u.respuestaSeguridad || "");
     setIsEditingUser(true);
   };
 
@@ -124,7 +130,9 @@ export default function AdminPanel({
         name: userFormName,
         username: userFormUsername,
         password: userFormPassword,
-        role: userFormRole
+        role: userFormRole,
+        preguntaSeguridad: userFormPregunta,
+        respuestaSeguridad: userFormRespuesta
       };
 
       let res;
@@ -497,67 +505,16 @@ export default function AdminPanel({
     });
   };
 
-  // Core Helper: Direct Multi-file Upload to Firebase Storage with Fallback
+  // Core Helper: Direct Multi-file Upload to Express Backend with Fallback to Firebase Storage
   const uploadMultipleWithProgress = async (
     files: File[], 
     onProgress: (percent: number) => void
   ): Promise<string[]> => {
-    // We try client-side Firebase Storage first (durable, high-speed, direct)
+    // 1. We prioritize the high-speed Express Backend /api/upload endpoint because it is 100% reliable
+    // in our sandboxed Node environments and won't get stuck at 0% due to Firebase Storage bucket permissions.
     try {
-      console.log(`[Firebase Client Storage] Iniciando subida de ${files.length} archivo(s)...`);
-      const { ref, uploadBytesResumable, getDownloadURL } = await import("firebase/storage");
-      const { storage } = await import("../firebase");
-
-      const fileProgresses = new Array(files.length).fill(0);
-
-      const uploadPromises = files.map((file, idx) => {
-        return new Promise<string>((resolveFile, rejectFile) => {
-          // Create clean unique path in Storage bucket
-          const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-          // Safely acquire file extension (defaulting to .jpg if missing or empty)
-          const extIndex = file.name.lastIndexOf(".");
-          const ext = extIndex !== -1 ? file.name.substring(extIndex) : "";
-          const baseName = file.name.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9]/g, "_");
-          const storagePath = `products/${baseName}-${uniqueSuffix}${ext || ".jpg"}`;
-          const fileRef = ref(storage, storagePath);
-
-          const uploadTask = uploadBytesResumable(fileRef, file);
-
-          uploadTask.on(
-            "state_changed",
-            (snapshot) => {
-              const progress = snapshot.totalBytes > 0 
-                ? (snapshot.bytesTransferred / snapshot.totalBytes) * 100 
-                : 0;
-              fileProgresses[idx] = progress;
-              
-              // Calculate overall aggregate percentage progress
-              const totalProgress = fileProgresses.reduce((acc, curr) => acc + curr, 0) / files.length;
-              onProgress(Math.round(totalProgress));
-            },
-            (error) => {
-              console.warn(`[Firebase Client Storage] Error en archivo "${file.name}":`, error);
-              rejectFile(error);
-            },
-            async () => {
-              try {
-                const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-                console.log(`[Firebase Client Storage] Subido con éxito: ${file.name} ➔ ${downloadURL}`);
-                resolveFile(downloadURL);
-              } catch (urlErr) {
-                rejectFile(urlErr);
-              }
-            }
-          );
-        });
-      });
-
-      return await Promise.all(uploadPromises);
-    } catch (fbStorageErr) {
-      console.warn("[Firebase Client Storage] Falló carga directa por problemas de cliente o reglas de storage. Usando fallback asíncrono en backend:", fbStorageErr);
-      
-      // FALLBACK: Traditional Node/Multer upload fallback
-      return new Promise<string[]>((resolve, reject) => {
+      console.log(`[Backend Upload] Iniciando subida de ${files.length} archivo(s) al servidor...`);
+      return await new Promise<string[]>((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.open("POST", "/api/upload");
         
@@ -573,6 +530,7 @@ export default function AdminPanel({
             try {
               const data = JSON.parse(xhr.responseText);
               if (data.urls && data.urls.length > 0) {
+                console.log("[Backend Upload] Completado con éxito:", data.urls);
                 resolve(data.urls);
               } else {
                 reject(new Error("No se devolvió la lista de URLs de archivo desde el servidor."));
@@ -599,6 +557,62 @@ export default function AdminPanel({
         });
         xhr.send(formData);
       });
+    } catch (backendErr: any) {
+      console.warn("[Backend Upload] Falló carga al backend. Intentando Firebase Storage como alternativa:", backendErr);
+      
+      // 2. Fallback: Client-side Firebase Storage
+      try {
+        console.log(`[Firebase Client Storage] Iniciando subida alternativa de ${files.length} archivo(s)...`);
+        const { ref, uploadBytesResumable, getDownloadURL } = await import("firebase/storage");
+        const { storage } = await import("../firebase");
+
+        const fileProgresses = new Array(files.length).fill(0);
+
+        const uploadPromises = files.map((file, idx) => {
+          return new Promise<string>((resolveFile, rejectFile) => {
+            // Create clean unique path in Storage bucket
+            const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+            const extIndex = file.name.lastIndexOf(".");
+            const ext = extIndex !== -1 ? file.name.substring(extIndex) : "";
+            const baseName = file.name.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9]/g, "_");
+            const storagePath = `products/${baseName}-${uniqueSuffix}${ext || ".jpg"}`;
+            const fileRef = ref(storage, storagePath);
+
+            const uploadTask = uploadBytesResumable(fileRef, file);
+
+            uploadTask.on(
+              "state_changed",
+              (snapshot) => {
+                const progress = snapshot.totalBytes > 0 
+                  ? (snapshot.bytesTransferred / snapshot.totalBytes) * 100 
+                  : 0;
+                fileProgresses[idx] = progress;
+                
+                // Calculate overall aggregate percentage progress
+                const totalProgress = fileProgresses.reduce((acc, curr) => acc + curr, 0) / files.length;
+                onProgress(Math.round(totalProgress));
+              },
+              (error) => {
+                console.warn(`[Firebase Client Storage] Error en archivo "${file.name}":`, error);
+                rejectFile(error);
+              },
+              async () => {
+                try {
+                  const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+                  console.log(`[Firebase Client Storage] Subido con éxito: ${file.name} ➔ ${downloadURL}`);
+                  resolveFile(downloadURL);
+                } catch (urlErr) {
+                  rejectFile(urlErr);
+                }
+              }
+            );
+          });
+        });
+
+        return await Promise.all(uploadPromises);
+      } catch (fbStorageErr: any) {
+        throw new Error("No fue posible subir los archivos. Al parecer la conexión falló: " + (fbStorageErr?.message || fbStorageErr));
+      }
     }
   };
 
@@ -2290,6 +2304,36 @@ export default function AdminPanel({
                     <option value="Vendedor">Vendedor (Sube productos y modifica catálogo, sin gestión de usuarios)</option>
                     <option value="Administrador">Administrador (Control total y gestión de usuarios)</option>
                   </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Pregunta de Seguridad (Para recuperación de cuenta) *</label>
+                  <select
+                    value={userFormPregunta}
+                    onChange={(e) => setUserFormPregunta(e.target.value)}
+                    className="w-full px-3.5 py-2 border border-slate-200 rounded-lg text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-500/20 text-slate-800 bg-white"
+                    required
+                  >
+                    <option value="">-- Selecciona una Pregunta --</option>
+                    <option value="¿Cuál es el nombre de tu primera mascota?">¿Cuál es el nombre de tu primera mascota?</option>
+                    <option value="¿En qué ciudad naciste?">¿En qué ciudad naciste?</option>
+                    <option value="¿Cuál es el nombre de tu escuela primaria?">¿Cuál es el nombre de tu escuela primaria?</option>
+                    <option value="¿Cuál es tu comida favorita?">¿Cuál es tu comida favorita?</option>
+                    <option value="¿Cuál es el segundo nombre de tu madre?">¿Cuál es el segundo nombre de tu madre?</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Respuesta a la Pregunta *</label>
+                  <input
+                    type="text"
+                    value={userFormRespuesta}
+                    onChange={(e) => setUserFormRespuesta(e.target.value)}
+                    className="w-full px-3.5 py-2 border border-slate-200 rounded-lg text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-500/20 text-slate-800"
+                    placeholder="Escribe la respuesta secreta (No distingue mayúsculas)"
+                    required
+                  />
+                  <span className="text-[10px] text-slate-400 block mt-1">El usuario podrá responder esta pregunta para auto-restablecer su contraseña si la olvida.</span>
                 </div>
               </div>
 
