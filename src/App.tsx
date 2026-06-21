@@ -14,7 +14,7 @@ import {
   collection, getDocs, doc, getDoc, updateDoc, query, orderBy, setDoc 
 } from "firebase/firestore";
 import { 
-  Lock, LogOut, CheckCircle2, ShoppingBag, Grid, Compass, Smartphone, AlertCircle, X, ShieldAlert, Share2 
+  Lock, LogOut, CheckCircle2, ShoppingBag, Grid, Compass, Smartphone, AlertCircle, X, ShieldAlert, Share2, Sparkles
 } from "lucide-react";
 import StoreHeader from "./components/StoreHeader";
 import StoreFooter from "./components/StoreFooter";
@@ -110,6 +110,13 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [loadingApp, setLoadingApp] = useState(false);
   const [isUsingCache, setIsUsingCache] = useState(false);
+
+  // Safety fallback for hidden location tab
+  useEffect(() => {
+    if (storeConfig.showLocation === false && !user && activeViewTab === "location") {
+      setActiveViewTab("catalog");
+    }
+  }, [storeConfig.showLocation, user, activeViewTab]);
 
   // Modal Login form states
   const [showLoginModal, setShowLoginModal] = useState(false);
@@ -498,6 +505,10 @@ export default function App() {
 
   // Filter products by search bar input and category selections
   const filteredProducts = products.filter((prod) => {
+    // Hide out-of-stock items if config says so and the active visitor is not an administrative user
+    const isPublicFilteredOut = storeConfig.hideOutOfStock && !user && !prod.isAvailable;
+    if (isPublicFilteredOut) return false;
+
     const matchesCategory = selectedCategory === "Todos" || prod.category === selectedCategory;
     const cleanSearch = searchQuery.toLowerCase().trim();
     const matchesSearch = 
@@ -560,6 +571,15 @@ export default function App() {
           )}
         </div>
       </div>
+
+      {/* Dynamic Promo Banner Ribbon */}
+      {storeConfig.promoBannerText && storeConfig.promoBannerText.trim() && (
+        <div className="w-full bg-amber-500 text-slate-950 font-extrabold uppercase tracking-widest text-[9px] py-1 text-center select-none shadow-sm flex items-center justify-center gap-1.5 overflow-hidden animate-pulse">
+          <Sparkles size={11} className="text-slate-950" />
+          <span>{storeConfig.promoBannerText}</span>
+          <Sparkles size={11} className="text-slate-950" />
+        </div>
+      )}
 
       {/* Access alert warnings */}
       {authError && (
@@ -630,7 +650,7 @@ export default function App() {
             onOpenShare={() => setIsShareOpen(true)}
           />
 
-          <main className="flex-grow max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8 animate-fadeIn">
+          <main className="flex-grow max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8 animate-fadeIn font-sans">
             
             {/* View Tab Switcher */}
             <div className="flex border-b border-slate-200 mb-8 w-full font-bold text-xs uppercase tracking-wider select-none">
@@ -644,16 +664,18 @@ export default function App() {
               >
                 🛍️ Catálogo de Productos
               </button>
-              <button
-                onClick={() => setActiveViewTab("location")}
-                className={`pb-3 px-5 transition-all border-b-2 relative -mb-[2px] ${
-                  activeViewTab === "location"
-                    ? "text-amber-600 border-amber-500 font-extrabold"
-                    : "text-slate-400 border-transparent hover:text-slate-700"
-                }`}
-              >
-                📍 Ubicación y Fotos
-              </button>
+              {(storeConfig.showLocation !== false || (user && user.isAdmin)) && (
+                <button
+                  onClick={() => setActiveViewTab("location")}
+                  className={`pb-3 px-5 transition-all border-b-2 relative -mb-[2px] ${
+                    activeViewTab === "location"
+                      ? "text-amber-600 border-amber-500 font-extrabold"
+                      : "text-slate-400 border-transparent hover:text-slate-700"
+                  }`}
+                >
+                  📍 Ubicación y Fotos
+                </button>
+              )}
             </div>
 
             {activeViewTab === "catalog" ? (

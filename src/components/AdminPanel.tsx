@@ -71,7 +71,9 @@ export default function AdminPanel({
   const fetchUsers = async () => {
     setLoadingUsers(true);
     try {
-      const res = await fetch("/api/users");
+      const res = await fetch("/api/users", {
+        headers: { "Authorization": currentUser?.uid || "" }
+      });
       if (res.ok) {
         const data = await res.json();
         setUsers(data);
@@ -129,13 +131,19 @@ export default function AdminPanel({
       if (editingUserId) {
         res = await fetch(`/api/users/${editingUserId}`, {
           method: "PUT",
-          headers: { "Content-Type": "application/json" },
+          headers: { 
+            "Content-Type": "application/json",
+            "Authorization": currentUser?.uid || ""
+          },
           body: JSON.stringify(payload)
         });
       } else {
         res = await fetch(`/api/users`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { 
+            "Content-Type": "application/json",
+            "Authorization": currentUser?.uid || ""
+          },
           body: JSON.stringify(payload)
         });
       }
@@ -167,7 +175,10 @@ export default function AdminPanel({
     setLoading(true);
     try {
       const res = await fetch(`/api/users/${id}`, {
-        method: "DELETE"
+        method: "DELETE",
+        headers: {
+          "Authorization": currentUser?.uid || ""
+        }
       });
 
       if (res.ok) {
@@ -217,6 +228,10 @@ export default function AdminPanel({
   );
   const [locationUrl, setLocationUrl] = useState(storeConfig.locationUrl || "");
   const [showPrices, setShowPrices] = useState(storeConfig.showPrices);
+  const [hideOutOfStock, setHideOutOfStock] = useState(storeConfig.hideOutOfStock ?? false);
+  const [showLocation, setShowLocation] = useState(storeConfig.showLocation ?? true);
+  const [bannerStyle, setBannerStyle] = useState<"classic" | "compact">(storeConfig.bannerStyle || "classic");
+  const [promoBannerText, setPromoBannerText] = useState(storeConfig.promoBannerText || "");
   const [storeImagesList, setStoreImagesList] = useState<string[]>([""]);
 
   // Product edits states
@@ -249,6 +264,10 @@ export default function AdminPanel({
       setWhatsappCustomMessage(storeConfig.whatsappCustomMessage || "");
       setLocationUrl(storeConfig.locationUrl || "");
       setShowPrices(storeConfig.showPrices);
+      setHideOutOfStock(storeConfig.hideOutOfStock ?? false);
+      setShowLocation(storeConfig.showLocation ?? true);
+      setBannerStyle(storeConfig.bannerStyle || "classic");
+      setPromoBannerText(storeConfig.promoBannerText || "");
       setStoreImagesList(storeConfig.storeImages && storeConfig.storeImages.length > 0 ? [...storeConfig.storeImages] : [""]);
     }
   }, [storeConfig]);
@@ -274,7 +293,10 @@ export default function AdminPanel({
       // 1. Sync with Server API (using Firebase Admin SDK securely)
       const res = await fetch("/api/products/seed", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": currentUser?.uid || ""
+        },
         body: JSON.stringify(products)
       });
 
@@ -291,7 +313,10 @@ export default function AdminPanel({
       try {
         const configRes = await fetch("/api/store-config", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { 
+            "Content-Type": "application/json",
+            "Authorization": currentUser?.uid || ""
+          },
           body: JSON.stringify(storeConfig)
         });
         if (configRes.ok) {
@@ -472,53 +497,109 @@ export default function AdminPanel({
     });
   };
 
-  // Core Helper: Direct Multi-file Upload to our Node/Express Backend
-  const uploadMultipleWithProgress = (
+  // Core Helper: Direct Multi-file Upload to Firebase Storage with Fallback
+  const uploadMultipleWithProgress = async (
     files: File[], 
     onProgress: (percent: number) => void
   ): Promise<string[]> => {
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open("POST", "/api/upload");
-      
-      xhr.upload.onprogress = (event) => {
-        if (event.lengthComputable) {
-          const percent = Math.round((event.loaded / event.total) * 100);
-          onProgress(percent);
-        }
-      };
+    // We try client-side Firebase Storage first (durable, high-speed, direct)
+    try {
+      console.log(`[Firebase Client Storage] Iniciando subida de ${files.length} archivo(s)...`);
+      const { ref, uploadBytesResumable, getDownloadURL } = await import("firebase/storage");
+      const { storage } = await import("../firebase");
 
-      xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          try {
-            const data = JSON.parse(xhr.responseText);
-            if (data.urls && data.urls.length > 0) {
-              resolve(data.urls);
-            } else {
-              reject(new Error("No se devolvió la lista de URLs del archivo desde el servidor de Google Cloud."));
+      const fileProgresses = new Array(files.length).fill(0);
+
+      const uploadPromises = files.map((file, idx) => {
+        return new Promise<string>((resolveFile, rejectFile) => {
+          // Create clean unique path in Storage bucket
+          const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+          // Safely acquire file extension (defaulting to .jpg if missing or empty)
+          const extIndex = file.name.lastIndexOf(".");
+          const ext = extIndex !== -1 ? file.name.substring(extIndex) : "";
+          const baseName = file.name.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9]/g, "_");
+          const storagePath = `products/${baseName}-${uniqueSuffix}${ext || ".jpg"}`;
+          const fileRef = ref(storage, storagePath);
+
+          const uploadTask = uploadBytesResumable(fileRef, file);
+
+          uploadTask.on(
+            "state_changed",
+            (snapshot) => {
+              const progress = snapshot.totalBytes > 0 
+                ? (snapshot.bytesTransferred / snapshot.totalBytes) * 100 
+                : 0;
+              fileProgresses[idx] = progress;
+              
+              // Calculate overall aggregate percentage progress
+              const totalProgress = fileProgresses.reduce((acc, curr) => acc + curr, 0) / files.length;
+              onProgress(Math.round(totalProgress));
+            },
+            (error) => {
+              console.warn(`[Firebase Client Storage] Error en archivo "${file.name}":`, error);
+              rejectFile(error);
+            },
+            async () => {
+              try {
+                const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+                console.log(`[Firebase Client Storage] Subido con éxito: ${file.name} ➔ ${downloadURL}`);
+                resolveFile(downloadURL);
+              } catch (urlErr) {
+                rejectFile(urlErr);
+              }
             }
-          } catch (e) {
-            reject(new Error("Respuesta inválida del servidor."));
-          }
-        } else {
-          try {
-            const data = JSON.parse(xhr.responseText);
-            reject(new Error(data.error || `Error del servidor: Código ${xhr.status}`));
-          } catch (e) {
-            reject(new Error(`Error del servidor: Código de estado HTTP ${xhr.status}`));
-          }
-        }
-      };
-
-      xhr.onerror = () => reject(new Error("Error de red cargando el archivo al servidor."));
-      xhr.ontimeout = () => reject(new Error("Tiempo de espera agotado en la red."));
-
-      const formData = new FormData();
-      files.forEach((file) => {
-        formData.append("files", file);
+          );
+        });
       });
-      xhr.send(formData);
-    });
+
+      return await Promise.all(uploadPromises);
+    } catch (fbStorageErr) {
+      console.warn("[Firebase Client Storage] Falló carga directa por problemas de cliente o reglas de storage. Usando fallback asíncrono en backend:", fbStorageErr);
+      
+      // FALLBACK: Traditional Node/Multer upload fallback
+      return new Promise<string[]>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", "/api/upload");
+        
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const percent = Math.round((event.loaded / event.total) * 100);
+            onProgress(percent);
+          }
+        };
+
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              const data = JSON.parse(xhr.responseText);
+              if (data.urls && data.urls.length > 0) {
+                resolve(data.urls);
+              } else {
+                reject(new Error("No se devolvió la lista de URLs de archivo desde el servidor."));
+              }
+            } catch (e) {
+              reject(new Error("Respuesta inválida del servidor."));
+            }
+          } else {
+            try {
+              const data = JSON.parse(xhr.responseText);
+              reject(new Error(data.error || `Error del servidor: Código ${xhr.status}`));
+            } catch (e) {
+              reject(new Error(`Error del servidor: Código de estado HTTP ${xhr.status}`));
+            }
+          }
+        };
+
+        xhr.onerror = () => reject(new Error("Error de red cargando el archivo al servidor."));
+        xhr.ontimeout = () => reject(new Error("Tiempo de espera agotado en la red."));
+
+        const formData = new FormData();
+        files.forEach((file) => {
+          formData.append("files", file);
+        });
+        xhr.send(formData);
+      });
+    }
   };
 
   // Media upload handler with actual progress, size checks, and clear errors
@@ -731,6 +812,10 @@ export default function AdminPanel({
       whatsappCustomMessage: whatsappCustomMessage.trim(),
       locationUrl: locationUrl.trim(),
       showPrices: !!showPrices,
+      hideOutOfStock: !!hideOutOfStock,
+      showLocation: !!showLocation,
+      bannerStyle: bannerStyle,
+      promoBannerText: promoBannerText.trim(),
       storeImages: storeImagesList.filter(url => url.trim() !== ""),
       updatedAt: new Date()
     };
@@ -757,7 +842,10 @@ export default function AdminPanel({
       // Save directly to Google Cloud Firestore through secure Server API (as fallback and sync)
       const res = await fetch("/api/store-config", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": currentUser?.uid || ""
+        },
         body: JSON.stringify(updatedData)
       });
 
@@ -919,7 +1007,10 @@ export default function AdminPanel({
       if (editingProductId) {
         res = await fetch(`/api/products/${editingProductId}`, {
           method: "PUT",
-          headers: { "Content-Type": "application/json" },
+          headers: { 
+            "Content-Type": "application/json",
+            "Authorization": currentUser?.uid || ""
+          },
           body: JSON.stringify(reqObj)
         });
       } else {
@@ -929,7 +1020,10 @@ export default function AdminPanel({
         };
         res = await fetch("/api/products", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { 
+            "Content-Type": "application/json",
+            "Authorization": currentUser?.uid || ""
+          },
           body: JSON.stringify(createObj)
         });
       }
@@ -974,7 +1068,10 @@ export default function AdminPanel({
     try {
       // Delete from Firestore directly through Server API (as fallback)
       const res = await fetch(`/api/products/${id}`, {
-        method: "DELETE"
+        method: "DELETE",
+        headers: { 
+          "Authorization": currentUser?.uid || ""
+        }
       });
 
       if (!res.ok) {
@@ -1361,12 +1458,74 @@ export default function AdminPanel({
                   )}
                 </div>
                 {videoUrl && (
-                  <div className="mt-2 text-[10px] bg-slate-50/50 p-2 border border-slate-100 rounded-lg flex items-center justify-between">
+                  <div className="mt-2 text-[10px] bg-slate-50/50 p-2 border border-slate-100 rounded-lg flex items-center justify-between animate-fadeIn">
                     <span className="text-slate-500 font-mono truncate max-w-[200px]">Video: {videoUrl}</span>
                     <span className="text-[9px] text-emerald-600 font-bold uppercase tracking-wide">Listo para reproducir</span>
                   </div>
                 )}
               </div>
+
+              {/* Dynamic Video Preview Box */}
+              {videoUrl && (
+                <div className="bg-slate-50 rounded-xl p-4 border border-slate-200 animate-fadeIn">
+                  <span className="text-[11px] font-semibold text-slate-400 block mb-2 uppercase">Previsualización de Video Reproducible</span>
+                  {(() => {
+                    const cleanUrl = videoUrl.trim();
+                    const ytReg = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/;
+                    const ytMatch = cleanUrl.match(ytReg);
+                    const vimeoReg = /(?:vimeo\.com\/|player\.vimeo\.com\/video\/)([0-9]+)/;
+                    const vimeoMatch = cleanUrl.match(vimeoReg);
+
+                    if (ytMatch && ytMatch[1]) {
+                      return (
+                        <div className="aspect-video w-full rounded-lg overflow-hidden relative border bg-black shadow-inner">
+                          <iframe
+                            src={`https://www.youtube.com/embed/${ytMatch[1]}`}
+                            className="absolute top-0 left-0 w-full h-full"
+                            allowFullScreen
+                            allow="autoplay; encrypted-media"
+                          />
+                        </div>
+                      );
+                    } else if (vimeoMatch && vimeoMatch[1]) {
+                      return (
+                        <div className="aspect-video w-full rounded-lg overflow-hidden relative border bg-black shadow-inner">
+                          <iframe
+                            src={`https://player.vimeo.com/video/${vimeoMatch[1]}`}
+                            className="absolute top-0 left-0 w-full h-full"
+                            allowFullScreen
+                            allow="autoplay; encrypted-media"
+                          />
+                        </div>
+                      );
+                    } else if (
+                      cleanUrl.startsWith("/uploads/") ||
+                      cleanUrl.endsWith(".mp4") ||
+                      cleanUrl.endsWith(".webm") ||
+                      cleanUrl.endsWith(".ogg") ||
+                      cleanUrl.includes("drive.google.com")
+                    ) {
+                      return (
+                        <div className="aspect-video w-full rounded-lg overflow-hidden relative border bg-black shadow-inner">
+                          <video
+                            src={cleanUrl}
+                            controls
+                            className="absolute top-0 left-0 w-full h-full object-contain"
+                          />
+                        </div>
+                      );
+                    } else {
+                      return (
+                        <div className="aspect-video w-full rounded-lg border border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400 bg-white p-3 text-center">
+                          <Video size={20} className="text-slate-300 mb-1" />
+                          <span className="text-[10px] font-semibold text-slate-500">¿Formato/Enlace no soportado directamente?</span>
+                          <span className="text-[9px] text-slate-400 mt-1">Se mostrará como enlace externo. No se puede previsualizar en el catálogo.</span>
+                        </div>
+                      );
+                    }
+                  })()}
+                </div>
+              )}
 
               {/* Preview Box */}
               <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
@@ -1695,20 +1854,82 @@ export default function AdminPanel({
               </span>
             </div>
 
-            <div className="flex items-center justify-between p-2 bg-white border border-slate-100 rounded-lg">
-              <div className="flex items-center gap-2">
-                {showPrices ? <Eye size={16} className="text-emerald-500" /> : <EyeOff size={16} className="text-slate-400" />}
+            <div className="border-t border-slate-100 pt-3 space-y-3">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Opciones Visuales y de Exposición</span>
+
+              <div className="flex items-center justify-between p-2 bg-white border border-slate-100 rounded-lg">
+                <div className="flex items-center gap-2">
+                  {showPrices ? <Eye size={16} className="text-emerald-500" /> : <EyeOff size={16} className="text-slate-400" />}
+                  <div>
+                    <span className="text-xs font-semibold text-slate-700 block">Exponer Precios al Público</span>
+                    <span className="text-[10px] text-slate-400">Si está inactivo, los visitantes verán "Consultar precios por privado".</span>
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={showPrices}
+                  onChange={(e) => setShowPrices(e.target.checked)}
+                  className="w-9 h-5 text-amber-500 bg-slate-100 border-slate-300 rounded-full focus:ring-amber-500"
+                />
+              </div>
+
+              <div className="flex items-center justify-between p-2 bg-white border border-slate-100 rounded-lg">
+                <div className="flex items-center gap-2">
+                  {hideOutOfStock ? <EyeOff size={16} className="text-rose-500" /> : <Eye size={16} className="text-slate-400" />}
+                  <div>
+                    <span className="text-xs font-semibold text-slate-700 block">Ocultar Productos sin Stock</span>
+                    <span className="text-[10px] text-slate-400">Si está activo, los productos marcados como "Fuera de Stock" no se mostrarán al público.</span>
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={hideOutOfStock}
+                  onChange={(e) => setHideOutOfStock(e.target.checked)}
+                  className="w-9 h-5 text-amber-500 bg-slate-100 border-slate-300 rounded-full focus:ring-amber-500"
+                />
+              </div>
+
+              <div className="flex items-center justify-between p-2 bg-white border border-slate-100 rounded-lg">
+                <div className="flex items-center gap-2">
+                  {showLocation ? <Eye size={16} className="text-emerald-500" /> : <EyeOff size={16} className="text-slate-400" />}
+                  <div>
+                    <span className="text-xs font-semibold text-slate-700 block">Exponer Pestaña de Ubicación y Sucursal</span>
+                    <span className="text-[10px] text-slate-400">Activa o desactiva la vista del mapa e imágenes de tu sucursal física en el catálogo.</span>
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={showLocation}
+                  onChange={(e) => setShowLocation(e.target.checked)}
+                  className="w-9 h-5 text-amber-500 bg-slate-100 border-slate-300 rounded-full focus:ring-amber-500"
+                />
+              </div>
+
+              <div className="p-3 bg-white border border-slate-100 rounded-lg space-y-3">
                 <div>
-                  <span className="text-xs font-semibold text-slate-700 block">Exponer Precios al Público</span>
-                  <span className="text-[10px] text-slate-400">Si está inactivo, los visitantes verán "Consultar precios por privado".</span>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Diseño de Banner de Inicio</label>
+                  <select
+                    value={bannerStyle}
+                    onChange={(e) => setBannerStyle(e.target.value as "classic" | "compact")}
+                    className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs focus:outline-hidden bg-slate-50 cursor-pointer"
+                  >
+                    <option value="classic">Clásico (Banner expansivo detallado)</option>
+                    <option value="compact">Compacto (Cabecera moderna minimalista)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Anuncio o Cinta Promocional Superior (Marquesina)</label>
+                  <input
+                    type="text"
+                    value={promoBannerText}
+                    onChange={(e) => setPromoBannerText(e.target.value)}
+                    className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs focus:outline-hidden"
+                    placeholder="Ej: 🔥 ¡Envíos gratis este fin de semana en compras mayores a $50! 🔥"
+                  />
+                  <span className="text-[9px] text-slate-400 block mt-0.5">Deja este campo vacío si no deseas mostrar una cinta de aviso promocional.</span>
                 </div>
               </div>
-              <input
-                type="checkbox"
-                checked={showPrices}
-                onChange={(e) => setShowPrices(e.target.checked)}
-                className="w-9 h-5 text-amber-500 bg-slate-100 border-slate-300 rounded-full focus:ring-amber-500"
-              />
             </div>
           </div>
 

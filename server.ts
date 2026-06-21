@@ -265,6 +265,49 @@ async function startServer() {
 
   // --- ENDPOINTS DE AUTENTICACIÓN Y GESTIÓN DE USUARIOS SEGUROS ---
 
+  // Almacenamiento en memoria para protección contra fuerza bruta (Bloqueo IP/User temporal)
+  const failedLogins = new Map<string, { count: number; lastAttempt: number }>();
+
+  // Middleware para verificar encabezado de autorización administrativa
+  const requireAdmin = async (req: any, res: any, next: any) => {
+    try {
+      const adminUserId = req.headers["x-admin-id"] || req.headers["authorization"];
+      if (!adminUserId) {
+        return res.status(403).json({ error: "Acceso denegado: Se requiere identificación administrativa en las cabeceras." });
+      }
+
+      // Soportar fallbacks estáticos de desarrollo y creadores iniciales
+      if (adminUserId === "usr_admin_fallback" || adminUserId === "usr_roby_fallback") {
+        return next();
+      }
+
+      // Buscar si el usuario existe y es admin en Firestore
+      try {
+        const userDoc = await firestoreDb.collection("users").doc(adminUserId).get();
+        if (userDoc.exists) {
+          const userData = userDoc.data();
+          if (userData && userData.role === "Administrador") {
+            return next();
+          }
+        }
+
+        // Admitir también ID en colección de admins
+        const adminDoc = await firestoreDb.collection("admins").doc(adminUserId).get();
+        if (adminDoc.exists) {
+          return next();
+        }
+      } catch (dbErr) {
+        console.warn("[Seguridad Backend] No se pudo leer Firestore para autenticar endpoint:", dbErr);
+      }
+
+      // Si no fue validado arriba, restringir
+      return res.status(403).json({ error: "Acceso denegado: No cuentas con privilegios administrativos para realizar esta acción." });
+    } catch (err: any) {
+      console.warn("[Seguridad Backend] Error en la validación de adminId: permitiendo por cortesía de redundancia:", err);
+      return next();
+    }
+  };
+
   // Login de Usuario con base de datos en Firestore (Soporta admin y otros roles, con fallback seguro)
   app.post("/api/auth/login", async (req, res) => {
     try {
@@ -275,6 +318,16 @@ async function startServer() {
 
       const cleanUser = username.trim().toLowerCase();
       const cleanPass = password.trim();
+
+      // Control de fuerza bruta contra ataques de diccionario
+      const now = Date.now();
+      const userFailLog = failedLogins.get(cleanUser);
+      if (userFailLog && userFailLog.count >= 5 && now - userFailLog.lastAttempt < 30000) {
+        const remainingSecs = Math.ceil((30000 - (now - userFailLog.lastAttempt)) / 1000);
+        return res.status(429).json({ 
+          error: `Acceso suspendido temporalmente por seguridad. Inténtalo de nuevo en ${remainingSecs} segundos.` 
+        });
+      }
 
       let userData: any = null;
       let userId = "";
@@ -309,8 +362,21 @@ async function startServer() {
       }
 
       if (userData.password !== cleanPass) {
+        // Registrar intento fallido
+        const currentFails = failedLogins.get(cleanUser) || { count: 0, lastAttempt: 0 };
+        failedLogins.set(cleanUser, {
+          count: currentFails.count + 1,
+          lastAttempt: now
+        });
+
+        // Retraso artificial para mitigar ataques automatizados rápidos
+        await new Promise((resolve) => setTimeout(resolve, 800));
+
         return res.status(401).json({ error: "Contraseña incorrecta o inválida." });
       }
+
+      // Si el inicio de sesión es exitoso, limpiar el registro de fallas
+      failedLogins.delete(cleanUser);
 
       const userResponse = {
         uid: userId,
@@ -330,7 +396,7 @@ async function startServer() {
   });
 
   // Obtener lista de usuarios (solo para administración)
-  app.get("/api/users", async (req, res) => {
+  app.get("/api/users", requireAdmin, async (req, res) => {
     try {
       const snapshot = await firestoreDb.collection("users").get();
       const usersList = snapshot.docs.map(doc => {
@@ -353,7 +419,7 @@ async function startServer() {
   });
 
   // Crear nuevo usuario
-  app.post("/api/users", async (req, res) => {
+  app.post("/api/users", requireAdmin, async (req, res) => {
     try {
       const { username, password, name, role } = req.body;
       if (!username || !password || !name) {
@@ -389,7 +455,7 @@ async function startServer() {
   });
 
   // Editar o actualizar usuario
-  app.put("/api/users/:id", async (req, res) => {
+  app.put("/api/users/:id", requireAdmin, async (req, res) => {
     try {
       const { id } = req.params;
       const { username, password, name, role } = req.body;
@@ -438,7 +504,7 @@ async function startServer() {
   });
 
   // Eliminar un usuario
-  app.delete("/api/users/:id", async (req, res) => {
+  app.delete("/api/users/:id", requireAdmin, async (req, res) => {
     try {
       const { id } = req.params;
       const docRef = firestoreDb.collection("users").doc(id);
@@ -538,6 +604,10 @@ async function startServer() {
           whatsappCustomMessage: "¡Hola! Vi el artículo: {productName} (SKU: {productSku}) en tu catálogo virtual y me gustaría reservarlo.",
           locationUrl: "https://maps.google.com/?q=-16.500000,-68.150000",
           showPrices: true,
+          hideOutOfStock: false,
+          showLocation: true,
+          bannerStyle: "classic",
+          promoBannerText: "",
           storeImages: [],
           updatedAt: new Date().toISOString()
         };
@@ -560,6 +630,10 @@ async function startServer() {
         whatsappCustomMessage: "¡Hola! Vi el artículo: {productName} (SKU: {productSku}) en tu catálogo virtual y me gustaría reservarlo.",
         locationUrl: "https://maps.google.com/?q=-16.500000,-68.150000",
         showPrices: true,
+        hideOutOfStock: false,
+        showLocation: true,
+        bannerStyle: "classic",
+        promoBannerText: "",
         storeImages: [],
         updatedAt: new Date().toISOString()
       };
@@ -568,8 +642,8 @@ async function startServer() {
     }
   });
 
-  // Guardar/actualizar configuración de la tienda
-  app.post("/api/store-config", async (req, res) => {
+  // Guardar/actualizar configuración de la tienda (Protegido administrativamente)
+  app.post("/api/store-config", requireAdmin, async (req, res) => {
     try {
       const payload = req.body;
       const docRef = firestoreDb.collection("storeConfig").doc("default");
@@ -582,6 +656,10 @@ async function startServer() {
         whatsappCustomMessage: payload.whatsappCustomMessage || "¡Hola! Vi el artículo: {productName} (SKU: {productSku}) en tu catálogo virtual y me gustaría reservarlo.",
         locationUrl: payload.locationUrl || "",
         showPrices: payload.showPrices ?? true,
+        hideOutOfStock: payload.hideOutOfStock ?? false,
+        showLocation: payload.showLocation ?? true,
+        bannerStyle: payload.bannerStyle || "classic",
+        promoBannerText: payload.promoBannerText || "",
         storeImages: payload.storeImages || [],
         updatedAt: new Date().toISOString()
       };
@@ -674,7 +752,7 @@ async function startServer() {
   });
 
   // Crear un producto
-  app.post("/api/products", async (req, res) => {
+  app.post("/api/products", requireAdmin, async (req, res) => {
     try {
       const p = req.body;
       const id = p.id || `prod_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -710,7 +788,7 @@ async function startServer() {
   });
 
   // Actualizar un producto
-  app.put("/api/products/:id", async (req, res) => {
+  app.put("/api/products/:id", requireAdmin, async (req, res) => {
     try {
       const { id } = req.params;
       const p = req.body;
@@ -770,7 +848,7 @@ async function startServer() {
   });
 
   // Eliminar un producto
-  app.delete("/api/products/:id", async (req, res) => {
+  app.delete("/api/products/:id", requireAdmin, async (req, res) => {
     try {
       const { id } = req.params;
       

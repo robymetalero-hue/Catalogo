@@ -11,6 +11,10 @@ export interface StoreConfig {
   whatsappCustomMessage?: string;
   locationUrl?: string;
   showPrices: boolean;
+  hideOutOfStock?: boolean; // Hide out-of-stock products for public views
+  showLocation?: boolean;   // Enable/disable the location map and branch tab
+  bannerStyle?: "classic" | "compact"; // Slogan banner styling style
+  promoBannerText?: string;  // Upper marquee promotion slider text
   storeImages?: string[]; // Multiple photos of the store itself
   updatedAt?: any; // Firestore Timestamp or Date ISO string
 }

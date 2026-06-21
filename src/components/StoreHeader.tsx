@@ -28,61 +28,74 @@ export default function StoreHeader({
   onOpenLocation,
   onOpenShare,
 }: StoreHeaderProps) {
+  const isCompact = storeConfig.bannerStyle === "compact";
+
   return (
     <header className="w-full bg-white/95 border-b border-slate-100 sticky top-0 z-30 shadow-3xs backdrop-blur-md">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+      <div className={`max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 ${isCompact ? "py-2.5" : "py-4"}`}>
         
         {/* Top Info line: Store description, phone call shortcut, location click */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-slate-100 pb-3 mb-4 text-xs text-slate-500 gap-2 font-medium">
-          <div className="flex items-center gap-1.5">
-            <motion.div
-              animate={{ rotate: [0, 15, -15, 0] }}
-              transition={{ repeat: Infinity, duration: 4, ease: "easeInOut" }}
-            >
-              <Sparkles size={12} className="text-amber-500" />
-            </motion.div>
-            <span className="font-semibold uppercase tracking-wider text-[10px] text-slate-400">Catálogo Oficial Virtual de Ventas</span>
-          </div>
-          
-          <div className="flex flex-wrap items-center gap-4 text-[11px]">
-            {storeConfig.phone && (
-              <a href={`tel:${storeConfig.phone}`} className="hover:text-amber-605 transition-colors flex items-center gap-1.5 hover:underline text-slate-600 font-bold">
-                <Phone size={11} className="text-amber-550" />
-                <span>Llámamos: {storeConfig.phone}</span>
-              </a>
-            )}
-            {storeConfig.address && (
-              <button onClick={onOpenLocation} className="hover:text-amber-600 transition-colors flex items-center gap-1.5 text-left select-none font-semibold text-slate-500">
-                <MapPin size={11} className="text-slate-400 shrink-0" />
-                <span className="line-clamp-1">{storeConfig.address}</span>
+        {!isCompact && (
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-slate-100 pb-3 mb-4 text-xs text-slate-500 gap-2 font-medium">
+            <div className="flex items-center gap-1.5">
+              <motion.div
+                animate={{ rotate: [0, 15, -15, 0] }}
+                transition={{ repeat: Infinity, duration: 4, ease: "easeInOut" }}
+              >
+                <Sparkles size={12} className="text-amber-500" />
+              </motion.div>
+              <span className="font-semibold uppercase tracking-wider text-[10px] text-slate-400">Catálogo Oficial Virtual de Ventas</span>
+            </div>
+            
+            <div className="flex flex-wrap items-center gap-4 text-[11px]">
+              {storeConfig.phone && (
+                <a href={`tel:${storeConfig.phone}`} className="hover:text-amber-600 transition-colors flex items-center gap-1.5 hover:underline text-slate-600 font-bold">
+                  <Phone size={11} className="text-amber-550" />
+                  <span>Llámanos: {storeConfig.phone}</span>
+                </a>
+              )}
+              {storeConfig.address && (
+                <button onClick={onOpenLocation} className="hover:text-amber-600 transition-colors flex items-center gap-1.5 text-left select-none font-semibold text-slate-500">
+                  <MapPin size={11} className="text-slate-400 shrink-0" />
+                  <span className="line-clamp-1">{storeConfig.address}</span>
+                </button>
+              )}
+              <button 
+                onClick={onOpenShare}
+                className="hover:text-amber-600 transition-colors flex items-center gap-1.5 text-left select-none font-bold text-slate-600"
+              >
+                <QrCode size={11} className="text-amber-500 shrink-0" />
+                <span>Compartir QR</span>
               </button>
-            )}
-            <button 
-              onClick={onOpenShare}
-              className="hover:text-amber-600 transition-colors flex items-center gap-1.5 text-left select-none font-bold text-slate-600"
-            >
-              <QrCode size={11} className="text-amber-500 shrink-0" />
-              <span>Compartir QR</span>
-            </button>
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           {/* Logo & Store Name */}
-          <div className="flex items-center gap-3.5">
+          <div className="flex items-center gap-3">
             <motion.div 
               whileHover={{ rotate: 5, scale: 1.05 }}
-              className="w-12 h-12 rounded-2xl bg-slate-950 border border-slate-800 text-white flex items-center justify-center shadow-lg shadow-slate-900/10 shrink-0"
+              className={`${isCompact ? "w-10 h-10 rounded-xl" : "w-12 h-12 rounded-2xl"} bg-slate-950 border border-slate-800 text-white flex items-center justify-center shadow-lg shrink-0`}
             >
-              <Store size={22} className="text-amber-400" />
+              <Store size={isCompact ? 18 : 22} className="text-amber-400" />
             </motion.div>
             <div>
-              <h1 className="font-sans font-extrabold text-slate-950 text-xl tracking-tight leading-none uppercase">
-                {storeConfig.storeName || "Mi Tienda Virtual"}
-              </h1>
-              <p className="text-[9px] uppercase tracking-widest font-extrabold text-slate-400 mt-1">
-                Selecciona tus artículos y haz tu pedido
-              </p>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className={`font-sans font-extrabold text-slate-950 ${isCompact ? "text-lg md:text-xl" : "text-xl"} tracking-tight leading-none uppercase`}>
+                  {storeConfig.storeName || "Mi Tienda Virtual"}
+                </h1>
+                {isCompact && (
+                  <span className="bg-slate-100 text-slate-500 text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-md">
+                    Catálogo
+                  </span>
+                )}
+              </div>
+              {!isCompact && (
+                <p className="text-[9px] uppercase tracking-widest font-extrabold text-slate-400 mt-1">
+                  Selecciona tus artículos y haz tu pedido
+                </p>
+              )}
             </div>
           </div>
 
