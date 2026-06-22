@@ -8,7 +8,7 @@ import { Product, StoreConfig, AdminUser } from "./types";
 import { db, auth } from "./firebase";
 import { 
   signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged,
-  signInWithEmailAndPassword, createUserWithEmailAndPassword
+  signInWithEmailAndPassword, createUserWithEmailAndPassword, signInAnonymously
 } from "firebase/auth";
 import { 
   collection, getDocs, doc, getDoc, updateDoc, query, orderBy, setDoc, onSnapshot 
@@ -108,6 +108,19 @@ export default function App() {
     } catch (e) {}
     return false;
   });
+
+  // Ensure client-side Firebase Auth has an active session when an admin is logged in
+  useEffect(() => {
+    if (user && !auth.currentUser) {
+      signInAnonymously(auth)
+        .then((cred) => {
+          console.log("[Firebase Auth] Sesión anónima sincronizada con éxito para Storage:", cred.user.uid);
+        })
+        .catch((err) => {
+          console.warn("[Firebase Auth] Error al iniciar sesión anónima para Storage:", err.message || err);
+        });
+    }
+  }, [user]);
   const [authError, setAuthError] = useState<string | null>(null);
   const [loadingApp, setLoadingApp] = useState(false);
   const [isUsingCache, setIsUsingCache] = useState(false);

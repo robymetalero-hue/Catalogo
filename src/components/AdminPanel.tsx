@@ -11,6 +11,7 @@ import {
   Store, Plus, Edit2, Trash2, Save, X, Eye, EyeOff, Video, Link, Check, Image as ImageIcon, Sparkles, FolderPlus, Phone, TrendingUp, ThumbsUp, BarChart2, Upload, CloudUpload, RefreshCw,
   Database, HardDrive, AlertTriangle, CheckCircle, Shield, HelpCircle, Terminal
 } from "lucide-react";
+import { validateImageFile } from "../utils/imageUtils";
 
 interface AdminPanelProps {
   products: Product[];
@@ -20,6 +21,17 @@ interface AdminPanelProps {
   onRefreshProducts: () => void;
   onRefreshConfig: () => void;
   currentUser?: any | null;
+}
+
+export interface UploadQueueItem {
+  id: string;
+  file: File | null;
+  name: string;
+  previewUrl: string;
+  progress: number;
+  status: "pending" | "compressing" | "uploading" | "success" | "error";
+  url: string | null;
+  errorMsg: string | null;
 }
 
 const CATEGORY_PRESETS = ["Calzado", "Ropa", "Accesorios", "Hogar", "Tecnología", "Salud y Belleza", "Deportes", "Otros"];
@@ -267,6 +279,7 @@ export default function AdminPanel({
   const [formIsHidden, setFormIsHidden] = useState(false);
   const [videoUrl, setVideoUrl] = useState("");
   const [imagesList, setImagesList] = useState<string[]>([""]);
+  const [uploadQueue, setUploadQueue] = useState<UploadQueueItem[]>([]);
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [uploadError, setUploadError] = useState("");
   const [uploadProgressMsg, setUploadProgressMsg] = useState("");
@@ -518,113 +531,122 @@ export default function AdminPanel({
     });
   };
 
-  // Core Helper: Direct Multi-file Upload to Express Backend with Fallback to Firebase Storage
+  // Core Helper: Direct Multi-file Upload to client-side Firebase Storage (primary) with backend fallback
   const uploadMultipleWithProgress = async (
     files: File[], 
     onProgress: (percent: number) => void
   ): Promise<string[]> => {
-    // 1. We prioritize the high-speed Express Backend /api/upload endpoint because it is 100% reliable
-    // in our sandboxed Node environments and won't get stuck at 0% due to Firebase Storage bucket permissions.
+    // 1. We prioritize client-side Firebase Storage upload to obtain 100% durable, permanent, public, global URLs
     try {
-      console.log(`[Backend Upload] Iniciando subida de ${files.length} archivo(s) al servidor...`);
-      return await new Promise<string[]>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open("POST", "/api/upload");
-        
-        xhr.upload.onprogress = (event) => {
-          if (event.lengthComputable) {
-            const percent = Math.round((event.loaded / event.total) * 100);
-            onProgress(percent);
-          }
-        };
+      console.log(`[Firebase Client Storage] Iniciando subida de ${files.length} archivo(s)...`);
+      const { ref, uploadBytesResumable, getDownloadURL } = await import("firebase/storage");
+      const { storage } = await import("../firebase");
 
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            try {
-              const data = JSON.parse(xhr.responseText);
-              if (data.urls && data.urls.length > 0) {
-                console.log("[Backend Upload] Completado con éxito:", data.urls);
-                resolve(data.urls);
-              } else {
-                reject(new Error("No se devolvió la lista de URLs de archivo desde el servidor."));
+      const fileProgresses = new Array(files.length).fill(0);
+
+      const uploadPromises = files.map((file, idx) => {
+        return new Promise<string>((resolveFile, rejectFile) => {
+          // Normalize and clean file name to prevent accents or special characters from failing in Firebase path URIs
+          const cleanName = file.name
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "") // remove accents
+            .replace(/[^a-zA-Z0-9.]/g, "_"); // replace special characters with underscores
+
+          const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+          const extIndex = cleanName.lastIndexOf(".");
+          const ext = extIndex !== -1 ? cleanName.substring(extIndex) : "";
+          const baseName = extIndex !== -1 ? cleanName.substring(0, extIndex) : cleanName;
+          
+          const storagePath = `products/${baseName}-${uniqueSuffix}${ext || ".jpg"}`;
+          const fileRef = ref(storage, storagePath);
+
+          const metadata = {
+            contentType: file.type || "image/jpeg"
+          };
+
+          const uploadTask = uploadBytesResumable(fileRef, file, metadata);
+
+          uploadTask.on(
+            "state_changed",
+            (snapshot) => {
+              const progress = snapshot.totalBytes > 0 
+                ? (snapshot.bytesTransferred / snapshot.totalBytes) * 100 
+                : 0;
+              fileProgresses[idx] = progress;
+              
+              // Calculate overall aggregate percentage progress
+              const totalProgress = fileProgresses.reduce((acc, curr) => acc + curr, 0) / files.length;
+              onProgress(Math.round(totalProgress));
+            },
+            (error) => {
+              console.warn(`[Firebase Client Storage] Error en archivo "${file.name}":`, error);
+              rejectFile(error);
+            },
+            async () => {
+              try {
+                const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+                console.log(`[Firebase Client Storage] Subido con éxito: ${file.name} ➔ ${downloadURL}`);
+                resolveFile(downloadURL);
+              } catch (urlErr) {
+                rejectFile(urlErr);
               }
-            } catch (e) {
-              reject(new Error("Respuesta inválida del servidor."));
             }
-          } else {
-            try {
-              const data = JSON.parse(xhr.responseText);
-              reject(new Error(data.error || `Error del servidor: Código ${xhr.status}`));
-            } catch (e) {
-              reject(new Error(`Error del servidor: Código de estado HTTP ${xhr.status}`));
-            }
-          }
-        };
-
-        xhr.onerror = () => reject(new Error("Error de red cargando el archivo al servidor."));
-        xhr.ontimeout = () => reject(new Error("Tiempo de espera agotado en la red."));
-
-        const formData = new FormData();
-        files.forEach((file) => {
-          formData.append("files", file);
+          );
         });
-        xhr.send(formData);
       });
-    } catch (backendErr: any) {
-      console.warn("[Backend Upload] Falló carga al backend. Intentando Firebase Storage como alternativa:", backendErr);
+
+      return await Promise.all(uploadPromises);
+    } catch (fbStorageErr: any) {
+      console.warn("[Firebase Client Storage] Falló carga a Storage. Intentando backend como fallback:", fbStorageErr);
       
-      // 2. Fallback: Client-side Firebase Storage
+      // 2. Fallback: Upload to Express Backend
       try {
-        console.log(`[Firebase Client Storage] Iniciando subida alternativa de ${files.length} archivo(s)...`);
-        const { ref, uploadBytesResumable, getDownloadURL } = await import("firebase/storage");
-        const { storage } = await import("../firebase");
+        console.log(`[Backend Upload] Iniciando subida de ${files.length} archivo(s) al servidor...`);
+        return await new Promise<string[]>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open("POST", "/api/upload");
+          
+          xhr.upload.onprogress = (event) => {
+            if (event.lengthComputable) {
+              const percent = Math.round((event.loaded / event.total) * 100);
+              onProgress(percent);
+            }
+          };
 
-        const fileProgresses = new Array(files.length).fill(0);
-
-        const uploadPromises = files.map((file, idx) => {
-          return new Promise<string>((resolveFile, rejectFile) => {
-            // Create clean unique path in Storage bucket
-            const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-            const extIndex = file.name.lastIndexOf(".");
-            const ext = extIndex !== -1 ? file.name.substring(extIndex) : "";
-            const baseName = file.name.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9]/g, "_");
-            const storagePath = `products/${baseName}-${uniqueSuffix}${ext || ".jpg"}`;
-            const fileRef = ref(storage, storagePath);
-
-            const uploadTask = uploadBytesResumable(fileRef, file);
-
-            uploadTask.on(
-              "state_changed",
-              (snapshot) => {
-                const progress = snapshot.totalBytes > 0 
-                  ? (snapshot.bytesTransferred / snapshot.totalBytes) * 100 
-                  : 0;
-                fileProgresses[idx] = progress;
-                
-                // Calculate overall aggregate percentage progress
-                const totalProgress = fileProgresses.reduce((acc, curr) => acc + curr, 0) / files.length;
-                onProgress(Math.round(totalProgress));
-              },
-              (error) => {
-                console.warn(`[Firebase Client Storage] Error en archivo "${file.name}":`, error);
-                rejectFile(error);
-              },
-              async () => {
-                try {
-                  const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-                  console.log(`[Firebase Client Storage] Subido con éxito: ${file.name} ➔ ${downloadURL}`);
-                  resolveFile(downloadURL);
-                } catch (urlErr) {
-                  rejectFile(urlErr);
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              try {
+                const data = JSON.parse(xhr.responseText);
+                if (data.urls && data.urls.length > 0) {
+                  console.log("[Backend Upload] Completado con éxito:", data.urls);
+                  resolve(data.urls);
+                } else {
+                  reject(new Error("No se devolvió la lista de URLs de archivo desde el servidor."));
                 }
+              } catch (e) {
+                reject(new Error("Respuesta inválida del servidor."));
               }
-            );
-          });
-        });
+            } else {
+              try {
+                const data = JSON.parse(xhr.responseText);
+                reject(new Error(data.error || `Error del servidor: Código ${xhr.status}`));
+              } catch (e) {
+                reject(new Error(`Error del servidor: Código de estado HTTP ${xhr.status}`));
+              }
+            }
+          };
 
-        return await Promise.all(uploadPromises);
-      } catch (fbStorageErr: any) {
-        throw new Error("No fue posible subir los archivos. Al parecer la conexión falló: " + (fbStorageErr?.message || fbStorageErr));
+          xhr.onerror = () => reject(new Error("Error de red cargando el archivo al servidor."));
+          xhr.ontimeout = () => reject(new Error("Tiempo de espera agotado en la red."));
+
+          const formData = new FormData();
+          files.forEach((file) => {
+            formData.append("files", file);
+          });
+          xhr.send(formData);
+        });
+      } catch (backendErr: any) {
+        throw new Error("No fue posible subir los archivos. Al parecer la conexión falló: " + (backendErr?.message || backendErr));
       }
     }
   };
@@ -737,6 +759,255 @@ export default function AdminPanel({
       setUploadProgressMsg("");
       e.target.value = "";
     }
+  };
+
+  // Modern Multi-file Interactive Queue Handlers (adds previews, progress and retry capabilities)
+  const handleSelectMediaFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const filesArray = Array.from(files) as File[];
+    const newItems: UploadQueueItem[] = [];
+
+    for (const file of filesArray) {
+      const isImage = file.type.startsWith("image/");
+      const isVideo = file.type.startsWith("video/");
+
+      if (isImage) {
+        // Validación rigurosa de imagen según requerimientos
+        const validationError = await validateImageFile(file);
+        if (validationError) {
+          showToast(`Error en "${file.name}": ${validationError}`, "error");
+          continue; // Bloquear inclusión en la cola
+        }
+      } else if (isVideo) {
+        if (file.size > 60 * 1024 * 1024) {
+          showToast(`El video "${file.name}" supera el tamaño de 60MB.`, "error");
+          continue;
+        }
+      } else {
+        showToast(`El archivo "${file.name}" no es una imagen o video compatible.`, "error");
+        continue;
+      }
+
+      const id = `upload_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const previewUrl = URL.createObjectURL(file);
+
+      newItems.push({
+        id,
+        file,
+        name: file.name,
+        previewUrl,
+        progress: 0,
+        status: "pending",
+        url: null,
+        errorMsg: null
+      });
+    }
+
+    if (newItems.length > 0) {
+      setUploadQueue((prev) => [...prev, ...newItems]);
+    }
+
+    // Reset input target value so selection of same file is always allowed
+    e.target.value = "";
+  };
+
+  const uploadSingleItem = async (itemId: string) => {
+    // Locate target queue element
+    const item = uploadQueue.find((q) => q.id === itemId);
+    if (!item || !item.file) return;
+
+    // Transition status to compressing
+    setUploadQueue((prev) =>
+      prev.map((q) => (q.id === itemId ? { ...q, status: "compressing", progress: 0 } : q))
+    );
+
+    try {
+      let processedFile = item.file;
+      if (item.file.type.startsWith("image/")) {
+        try {
+          processedFile = await compressImage(item.file);
+        } catch (compressErr) {
+          console.warn(`[Queue Optimización] Falló la compresión para ${item.name}, usando original:`, compressErr);
+        }
+      }
+
+      // Transition status to uploading
+      setUploadQueue((prev) =>
+        prev.map((q) => (q.id === itemId ? { ...q, status: "uploading" } : q))
+      );
+
+      let uploadedUrl = "";
+
+      // Try client-side Firebase Storage
+      try {
+        console.log(`[Queue Upload] Subiendo a Firebase Storage: ${processedFile.name}...`);
+        const { ref, uploadBytesResumable, getDownloadURL } = await import("firebase/storage");
+        const { storage } = await import("../firebase");
+
+        // Clean names
+        const cleanName = processedFile.name
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .replace(/[^a-zA-Z0-9.]/g, "_");
+
+        const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+        const extIndex = cleanName.lastIndexOf(".");
+        const ext = extIndex !== -1 ? cleanName.substring(extIndex) : "";
+        const baseName = extIndex !== -1 ? cleanName.substring(0, extIndex) : cleanName;
+
+        const storagePath = `products/${baseName}-${uniqueSuffix}${ext || ".jpg"}`;
+        const fileRef = ref(storage, storagePath);
+
+        const metadata = {
+          contentType: processedFile.type || "image/jpeg"
+        };
+
+        const uploadTask = uploadBytesResumable(fileRef, processedFile, metadata);
+
+        uploadedUrl = await new Promise<string>((resolve, reject) => {
+          uploadTask.on(
+            "state_changed",
+            (snapshot) => {
+              const progress = snapshot.totalBytes > 0 
+                ? (snapshot.bytesTransferred / snapshot.totalBytes) * 100 
+                : 0;
+              setUploadQueue((prev) =>
+                prev.map((q) => (q.id === itemId ? { ...q, progress: Math.min(Math.round(progress), 99) } : q))
+              );
+            },
+            (error) => {
+              reject(error);
+            },
+            async () => {
+              try {
+                const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+                resolve(downloadURL);
+              } catch (urlErr) {
+                reject(urlErr);
+              }
+            }
+          );
+        });
+      } catch (fbErr: any) {
+        console.warn("[Queue Upload] Falló Firebase Storage. Intentando backend fallback de cortesía:", fbErr);
+        
+        // Secondary Fallback: Backend Express /api/upload
+        uploadedUrl = await new Promise<string>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open("POST", "/api/upload");
+
+          xhr.upload.onprogress = (event) => {
+            if (event.lengthComputable) {
+              const percent = Math.round((event.loaded / event.total) * 100);
+              setUploadQueue((prev) =>
+                prev.map((q) => (q.id === itemId ? { ...q, progress: Math.min(percent, 99) } : q))
+              );
+            }
+          };
+
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              try {
+                const data = JSON.parse(xhr.responseText);
+                if (data.urls && data.urls.length > 0) {
+                  resolve(data.urls[0]);
+                } else {
+                  reject(new Error("No se recibió la URL de subida del servidor backend."));
+                }
+              } catch (e) {
+                reject(new Error("Respuesta de subida corrupta del servidor backend."));
+              }
+            } else {
+              reject(new Error(`Fallo del servidor (Código ${xhr.status})`));
+            }
+          };
+
+          xhr.onerror = () => reject(new Error("Error de conexión con el host de subida."));
+          xhr.ontimeout = () => reject(new Error("Límite de tiempo excedido en la red."));
+
+          const formData = new FormData();
+          formData.append("files", processedFile);
+          xhr.send(formData);
+        });
+      }
+
+      // Successful completion of item
+      setUploadQueue((prev) =>
+        prev.map((q) =>
+          q.id === itemId
+            ? { ...q, status: "success", progress: 100, url: uploadedUrl }
+            : q
+        )
+      );
+
+      // Check if it's a video to assign to video fields in parallel
+      const lowerUrl = uploadedUrl.toLowerCase();
+      if (
+        lowerUrl.includes(".mp4") ||
+        lowerUrl.includes(".webm") ||
+        lowerUrl.includes(".mov") ||
+        lowerUrl.includes(".avi") ||
+        lowerUrl.includes("video")
+      ) {
+        setVideoUrl(uploadedUrl);
+      }
+
+      showToast(`Medio "${item.name}" cargado de forma duradera.`);
+    } catch (error: any) {
+      console.error(`[Queue Upload] Error subiendo ${item.name}:`, error);
+      setUploadQueue((prev) =>
+        prev.map((q) =>
+          q.id === itemId
+            ? { ...q, status: "error", errorMsg: error.message || "Error al subir" }
+            : q
+        )
+      );
+      showToast(`Error al subir ${item.name}: ${error.message || error}`, "error");
+    }
+  };
+
+  // Reactive Queue processor loop (triggers sequentially for perfect thread flow)
+  useEffect(() => {
+    const pendingItem = uploadQueue.find((q) => q.status === "pending");
+    if (pendingItem) {
+      uploadSingleItem(pendingItem.id);
+    }
+  }, [uploadQueue]);
+
+  // Sync uploadQueue successful urls into imagesList (ensures backwards compatibility and catalog updates)
+  useEffect(() => {
+    const successfulUrls = uploadQueue
+      .filter((q) => q.status === "success" && q.url)
+      .map((q) => q.url as string);
+    setImagesList(successfulUrls.length > 0 ? successfulUrls : [""]);
+  }, [uploadQueue]);
+
+  // Remove element from queue and revoke object url
+  const handleRemoveQueueItem = (itemId: string) => {
+    setUploadQueue((prev) => {
+      const itemToRemove = prev.find((q) => q.id === itemId);
+      if (itemToRemove && itemToRemove.previewUrl && !itemToRemove.previewUrl.startsWith("http")) {
+        try {
+          URL.revokeObjectURL(itemToRemove.previewUrl);
+        } catch (e) {
+          console.warn("Could not revoke ObjectURL:", e);
+        }
+      }
+      return prev.filter((q) => q.id !== itemId);
+    });
+  };
+
+  // Retry upload of specific failed queue items
+  const handleRetryQueueItem = (itemId: string) => {
+    setUploadQueue((prev) =>
+      prev.map((q) =>
+        q.id === itemId
+          ? { ...q, status: "pending", progress: 0, errorMsg: null }
+          : q
+      )
+    );
   };
 
   const handleStoreMediaUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -907,6 +1178,7 @@ export default function AdminPanel({
     setFormIsHidden(false);
     setVideoUrl("");
     setImagesList([""]); // initialize with one empty field
+    setUploadQueue([]); // Clear upload queue
     setIsEditingProduct(true);
   };
 
@@ -929,27 +1201,80 @@ export default function AdminPanel({
     setFormHidePrice(product.hidePrice ?? false);
     setFormIsHidden(product.isHidden ?? false);
     setVideoUrl(product.videoUrl || "");
-    setImagesList(product.images && product.images.length > 0 ? [...product.images] : [""]);
+    
+    const existingImages = product.images && product.images.length > 0
+      ? product.images.filter(x => x && x.trim() !== "")
+      : [];
+    setImagesList(existingImages.length > 0 ? [...existingImages] : [""]);
+    
+    // Unify existing product images into the uploadQueue as pre-uploaded success items
+    const initialQueue: UploadQueueItem[] = existingImages.map((url, i) => ({
+      id: `existing_${i}_${Date.now()}`,
+      file: null,
+      name: url.substring(url.lastIndexOf("/") + 1).split("?")[0] || `Imagen ${i + 1}`,
+      previewUrl: url,
+      progress: 100,
+      status: "success",
+      url: url,
+      errorMsg: null
+    }));
+    setUploadQueue(initialQueue);
+    
     setIsEditingProduct(true);
   };
 
   // Handle Dynamic List for multiple images
   const handleAddImageField = () => {
     setImagesList([...imagesList, ""]);
+    setUploadQueue((prev) => [
+      ...prev,
+      {
+        id: `manual_new_${Date.now()}`,
+        file: null,
+        name: "Enlace Manual",
+        previewUrl: "",
+        progress: 100,
+        status: "pending", // mark as pending until text is filled so it matches visual queue
+        url: null,
+        errorMsg: null
+      }
+    ]);
   };
 
   const handleImageFieldChange = (index: number, val: string) => {
     const updated = [...imagesList];
     updated[index] = val;
     setImagesList(updated);
+
+    setUploadQueue((prev) => {
+      const nextQueue = [...prev];
+      if (index < nextQueue.length) {
+        nextQueue[index] = {
+          ...nextQueue[index],
+          url: val || null,
+          previewUrl: val,
+          status: val ? "success" : "pending"
+        };
+      } else {
+        nextQueue.push({
+          id: `manual_${index}_${Date.now()}`,
+          file: null,
+          name: val ? (val.substring(val.lastIndexOf("/") + 1).split("?")[0] || `Manual ${index + 1}`) : `Manual ${index + 1}`,
+          previewUrl: val,
+          progress: 100,
+          status: val ? "success" : "pending",
+          url: val || null,
+          errorMsg: null
+        });
+      }
+      return nextQueue;
+    });
   };
 
   const handleRemoveImageField = (index: number) => {
-    if (imagesList.length === 1) {
-      setImagesList([""]);
-    } else {
-      setImagesList(imagesList.filter((_, idx) => idx !== index));
-    }
+    const nextImages = imagesList.filter((_, idx) => idx !== index);
+    setImagesList(nextImages.length === 0 ? [""] : nextImages);
+    setUploadQueue((prev) => prev.filter((_, idx) => idx !== index));
   };
 
   // Action: Submit Product Form (Create / Edit)
@@ -1530,56 +1855,142 @@ export default function AdminPanel({
             <div className="space-y-4">
               
               {/* PC / Android Upload Zone */}
-              <div className="border border-dashed border-slate-200 hover:border-amber-400 bg-amber-50/10 hover:bg-amber-50/20 p-5 rounded-2xl transition-all relative flex flex-col items-center justify-center text-center">
+              <div className="border border-dashed border-slate-200 hover:border-amber-450 bg-amber-50/5 hover:bg-amber-50/10 p-5 rounded-2xl transition-all relative flex flex-col items-center justify-center text-center">
                 <input
                   id="media-file-picker"
                   type="file"
                   multiple
                   accept="image/*,video/*"
-                  onChange={handleMediaUpload}
-                  disabled={uploadingMedia}
+                  onChange={handleSelectMediaFiles}
                   className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                 />
                 
                 <div className="flex flex-col items-center pointer-events-none">
                   <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center mb-2">
-                    <Upload size={18} className={uploadingMedia ? "animate-bounce" : ""} />
+                    <Upload size={18} />
                   </div>
                   <span className="text-xs font-extrabold text-slate-800 uppercase tracking-wider">
-                    {uploadingMedia ? "Subiendo medios..." : "Subir Fotos y Videos"}
+                    Subir Fotos y Videos
                   </span>
                   <span className="text-[10px] text-slate-400 mt-1 max-w-[280px]">
-                    Selecciona varias fotos y videos a la vez desde tu PC o Android. (Admite MP4, PNG, JPG, etc.)
+                    Selecciona varias fotos y videos a la vez. Admite MP4, PNG, JPG, WEBP, etc.
                   </span>
                 </div>
-
-                {uploadingMedia && !uploadProgressMsg.includes("foto") && (
-                  <div className="absolute inset-0 bg-white/98 rounded-2xl flex flex-col items-center justify-center z-20 p-5 text-center">
-                    {/* circular spinner with percent */}
-                    <div className="relative flex items-center justify-center mb-3">
-                      <span className="w-14 h-14 rounded-full border-4 border-amber-100 border-t-amber-500 animate-spin inline-block" />
-                      <span className="absolute text-[11px] font-black text-amber-800">{uploadPercent}%</span>
-                    </div>
-                    
-                    {/* progress text messages */}
-                    <span className="text-[11px] font-bold text-slate-800 uppercase tracking-wide max-w-full truncate px-2 mb-2.5">
-                      {uploadProgressMsg || "Preparando Archivos..."}
-                    </span>
-
-                    {/* bar container */}
-                    <div className="w-full max-w-[200px] h-2 bg-slate-100 rounded-full overflow-hidden shadow-inner border border-slate-200/50">
-                      <div 
-                        className="h-full bg-linear-to-r from-amber-500 to-amber-600 rounded-full transition-all duration-300 ease-out" 
-                        style={{ width: `${uploadPercent}%` }}
-                      />
-                    </div>
-                  </div>
-                )}
               </div>
 
-              {uploadError && (
-                <div className="bg-rose-50 border border-rose-100 rounded-xl p-3 text-rose-700 text-[11px] font-semibold">
-                  {uploadError}
+              {/* Modern Interactive Upload Queue (Individual progress, previews, delete and retries) */}
+              {uploadQueue.length > 0 && (
+                <div className="space-y-2.5">
+                  <span className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                    Cola de Medios Seleccionados ({uploadQueue.length})
+                  </span>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-slate-50 p-3 rounded-2xl border border-slate-100">
+                    {uploadQueue.map((item) => {
+                      const isUploading = item.status === "uploading" || item.status === "compressing";
+                      const isSuccess = item.status === "success";
+                      const isError = item.status === "error";
+
+                      return (
+                        <div key={item.id} className="relative bg-white border border-slate-200 rounded-xl p-2 flex flex-col justify-between shadow-2xs overflow-hidden group">
+                          
+                          {/* Photo aspect ratio container */}
+                          <div className="relative aspect-square rounded-lg overflow-hidden bg-slate-100 mb-1.5 border border-slate-150">
+                            {item.previewUrl ? (
+                              <img
+                                src={item.previewUrl}
+                                alt={item.name}
+                                referrerPolicy="no-referrer"
+                                className={`w-full h-full object-cover transition-all duration-300 ${isUploading ? "brightness-50 blur-[1px]" : ""}`}
+                              />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-slate-400">
+                                <ImageIcon size={20} className="opacity-30" />
+                              </div>
+                            )}
+
+                            {/* Upload progress circular overlay */}
+                            {isUploading && (
+                              <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 text-white p-1">
+                                <div className="relative flex items-center justify-center">
+                                  <span className="w-8 h-8 rounded-full border-2 border-white/20 border-t-amber-400 animate-spin" />
+                                  <span className="absolute text-[9px] font-bold">{item.progress}%</span>
+                                </div>
+                                <span className="text-[8px] font-semibold tracking-wider uppercase mt-1">
+                                  {item.status === "compressing" ? "Ajustando..." : "Subiendo..."}
+                                </span>
+                              </div>
+                            )}
+
+                            {/* Success item indicator */}
+                            {isSuccess && (
+                              <div className="absolute top-1 right-1 p-1 bg-emerald-500 text-white rounded-full shadow-sm">
+                                <Check size={8} className="stroke-[3]" />
+                              </div>
+                            )}
+
+                            {/* Error item indicator */}
+                            {isError && (
+                              <div className="absolute inset-0 flex flex-col items-center justify-center bg-rose-500/90 text-white p-1">
+                                <AlertTriangle size={14} className="text-white mb-0.5 animate-pulse" />
+                                <span className="text-[9px] font-black uppercase tracking-wide">Fallo</span>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Footer details per item */}
+                          <div className="space-y-1">
+                            <span className="text-[10px] font-bold text-slate-700 block truncate max-w-full leading-tight" title={item.name}>
+                              {item.name}
+                            </span>
+
+                            {/* Linear sub bar indicator */}
+                            {isUploading && (
+                              <div className="w-full bg-slate-100 h-1 rounded-full overflow-hidden border border-slate-200">
+                                <div
+                                  className="h-full bg-linear-to-r from-amber-500 to-amber-600 rounded-full transition-all duration-300"
+                                  style={{ width: `${item.progress}%` }}
+                                />
+                              </div>
+                            )}
+
+                            {/* Error text feedback */}
+                            {isError && item.errorMsg && (
+                              <span className="text-[8px] font-semibold text-rose-500 block leading-tight truncate" title={item.errorMsg}>
+                                {item.errorMsg}
+                              </span>
+                            )}
+
+                            {/* Action links */}
+                            <div className="flex gap-1.5 justify-between pt-1 border-t border-slate-50 mt-1">
+                              {/* Remove item target */}
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveQueueItem(item.id)}
+                                disabled={isUploading}
+                                className="text-[9px] font-bold uppercase text-rose-500 hover:text-rose-600 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                title="Eliminar de la cola"
+                              >
+                                Eliminar
+                              </button>
+
+                              {/* Retry action */}
+                              {isError && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRetryQueueItem(item.id)}
+                                  className="text-[9px] font-bold uppercase text-amber-600 hover:text-amber-700 transition-colors flex items-center gap-0.5"
+                                  title="Volver a intentar"
+                                >
+                                  <RefreshCw size={8} className="animate-spin-reverse" />
+                                  Reintentar
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
 
@@ -1778,14 +2189,30 @@ export default function AdminPanel({
             >
               Cancelar
             </button>
-            <button
-              type="submit"
-              disabled={loading}
-              className="px-6 py-2 bg-slate-900 border border-slate-800 text-white rounded-xl text-xs font-semibold hover:bg-slate-850 flex items-center gap-1.5 transition-all shadow-xs shrink-0 disabled:opacity-50"
-            >
-              <Save size={13} />
-              <span>{loading ? "Guardando..." : "Guardar Producto"}</span>
-            </button>
+            {(() => {
+              const isUploadingActive = uploadQueue.some(
+                (q) => q.status === "uploading" || q.status === "compressing" || q.status === "pending"
+              );
+              return (
+                <button
+                  type="submit"
+                  disabled={loading || isUploadingActive}
+                  className="px-6 py-2 bg-slate-900 border border-slate-800 text-white rounded-xl text-xs font-semibold hover:bg-slate-850 flex items-center gap-1.5 transition-all shadow-xs shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isUploadingActive ? (
+                    <>
+                      <span className="w-3.5 h-3.5 border-2 border-white/20 border-t-white rounded-full animate-spin inline-block" />
+                      <span>Subiendo fotos...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Save size={13} />
+                      <span>{loading ? "Guardando..." : "Guardar Producto"}</span>
+                    </>
+                  )}
+                </button>
+              );
+            })()}
           </div>
         </form>
       ) : activeTab === "products" ? (
