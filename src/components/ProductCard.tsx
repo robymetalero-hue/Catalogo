@@ -228,19 +228,19 @@ const ProductCard: React.FC<ProductCardProps> = ({
           {/* Quick Contact buttons & details links */}
           <div className="grid grid-cols-2 gap-2 mt-2">
             <motion.button
-              whileHover={{ y: -1 }}
-              whileTap={{ scale: 0.98 }}
+              whileHover={{ scale: 1.05, y: -1 }}
+              whileTap={{ scale: 0.93 }}
               onClick={(e) => {
                 e.stopPropagation();
                 onOpenDetails(product);
               }}
-              className="px-3 py-2 text-center text-[11px] font-bold uppercase tracking-wider bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-xl transition-all"
+              className="px-3 py-2 text-center text-[11px] font-bold uppercase tracking-wider bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-xl transition-all cursor-pointer"
             >
               Ver ficha
             </motion.button>
             <motion.a
-              whileHover={{ y: -1 }}
-              whileTap={{ scale: 0.98 }}
+              whileHover={{ scale: 1.05, y: -1, boxShadow: "0 6px 15px rgba(16, 185, 129, 0.25)" }}
+              whileTap={{ scale: 0.93 }}
               href={getWhatsAppLink()}
               target="_blank"
               rel="noopener noreferrer"
@@ -250,7 +250,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
                   onWhatsAppInquiry(product);
                 }
               }}
-              className="flex items-center justify-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-[11px] uppercase tracking-wider py-2 rounded-xl transition-all shadow-md shadow-emerald-500/10"
+              className="flex items-center justify-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-[11px] uppercase tracking-wider py-2 rounded-xl transition-all shadow-md shadow-emerald-500/10 cursor-pointer"
             >
               <Phone size={12} />
               <span>Consultar</span>

@@ -122,10 +122,10 @@ export default function ProductDetailsModal({
       <motion.div 
         id="product-details-modal"
         className="relative w-full max-w-4xl max-h-[92vh] bg-white rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-slate-100/80"
-        initial={{ opacity: 0, scale: 0.93, y: 32 }}
+        initial={{ opacity: 0, scale: 0.96, y: 16 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.93, y: 32, transition: { duration: 0.2 } }}
-        transition={{ type: "spring", damping: 25, stiffness: 300, delay: 0.05 }}
+        exit={{ opacity: 0, scale: 0.96, y: 12 }}
+        transition={{ type: "spring", damping: 28, stiffness: 350, restDelta: 0.001 }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Close Button details */}
