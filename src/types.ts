@@ -28,6 +28,7 @@ export interface Product {
   retailPrice: number; // Precio por unidad
   wholesalePrice: number; // Precio al por mayor
   images: string[]; // List of URLs
+  backupImages?: string[]; // Highly compressed base64 local fallbacks for zero-loss container restart recovery
   videoUrl?: string; // YouTube, Vimeo or Direct video link
   isAvailable: boolean;
   hidePrice?: boolean; // Hide price for this specific product

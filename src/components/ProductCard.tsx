@@ -35,13 +35,26 @@ const ProductCard: React.FC<ProductCardProps> = ({
 
   const currentImageUrl = images[currentImageIndex];
 
+  const [imageSrc, setImageSrc] = React.useState(currentImageUrl || "");
+
   React.useEffect(() => {
+    setImageSrc(currentImageUrl || "");
     if (imgRef.current && imgRef.current.complete) {
       setImageLoading(false);
     } else {
       setImageLoading(true);
     }
   }, [currentImageUrl]);
+
+  const handleImageError = () => {
+    setImageLoading(false);
+    const backupImg = product.backupImages?.[currentImageIndex];
+    if (backupImg && imageSrc !== backupImg) {
+      setImageSrc(backupImg);
+    } else {
+      setImageSrc("https://images.unsplash.com/photo-1542291026-7eec264c27ff?q=80&w=600&auto=format&fit=crop");
+    }
+  };
 
   const handleNextImage = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -102,12 +115,12 @@ const ProductCard: React.FC<ProductCardProps> = ({
           <motion.img
             key={currentImageIndex}
             ref={imgRef}
-            src={images[currentImageIndex]}
+            src={imageSrc}
             alt={product.name}
             referrerPolicy="no-referrer"
             loading="lazy"
             onLoad={() => setImageLoading(false)}
-            onError={() => setImageLoading(false)}
+            onError={handleImageError}
             initial={{ opacity: 0, scale: 0.98 }}
             animate={{ opacity: imageLoading ? 0 : 1, scale: 1 }}
             exit={{ opacity: 0, scale: 1.02 }}

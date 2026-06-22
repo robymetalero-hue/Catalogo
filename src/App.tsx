@@ -288,10 +288,14 @@ export default function App() {
     } catch (err) {}
   };
 
-  const refreshAll = async () => {
-    setLoadingApp(true);
+  const refreshAll = async (silent?: boolean) => {
+    if (silent !== true) {
+      setLoadingApp(true);
+    }
     await Promise.all([fetchProducts(), fetchStoreConfig()]);
-    setLoadingApp(false);
+    if (silent !== true) {
+      setLoadingApp(false);
+    }
   };
 
   // Initial load of products and configuration from Google Cloud SQL (PostgreSQL)
@@ -544,10 +548,24 @@ export default function App() {
       const email = result.user.email;
       if (email !== "robymetalero@gmail.com") {
         setAuthError(`Acceso Restringido: El email '${email}' no figura como administrador oficial del catálogo.`);
+        try {
+          await signOut(auth);
+        } catch (signOutErr) {}
       } else {
+        const loggedUser: AdminUser = {
+          uid: result.user.uid,
+          email: result.user.email,
+          displayName: result.user.displayName || "Ing. Roby (Google)",
+          photoURL: result.user.photoURL,
+          isAdmin: true,
+          role: "Administrador"
+        };
+        setUser(loggedUser);
+        localStorage.setItem("admin_session", JSON.stringify(loggedUser));
+        setShowAdminPanel(true);
         setShowLoginModal(false);
-        setShareToast("¡Sesión iniciada con Google!");
-        setTimeout(() => setShareToast(null), 3000);
+        setShareToast(`¡Sesión iniciada con Google! Bienvenido, ${loggedUser.displayName}.`);
+        setTimeout(() => setShareToast(null), 4000);
       }
     } catch (error) {
       setAuthError("Error de autenticación Google: " + (error as Error).message);

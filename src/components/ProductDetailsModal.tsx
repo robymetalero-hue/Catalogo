@@ -30,14 +30,32 @@ export default function ProductDetailsModal({
   const [imageLoading, setImageLoading] = useState(true);
   const imgRef = useRef<HTMLImageElement>(null);
 
+  const images = product.images && product.images.filter(img => img && img.trim() !== "").length > 0 
+    ? product.images.filter(img => img && img.trim() !== "") 
+    : ["https://images.unsplash.com/photo-1544816155-12df9643f363?q=80&w=600&auto=format&fit=crop"];
+
+  const currentImageUrl = images[activeImageIndex];
+  const [imageSrc, setImageSrc] = useState(currentImageUrl || "");
+
   // Trigger loading skeleton during media transitions for ultimate visual polish
   useEffect(() => {
+    setImageSrc(currentImageUrl || "");
     if (!isPlayingVideo && imgRef.current && imgRef.current.complete) {
       setImageLoading(false);
     } else {
       setImageLoading(true);
     }
-  }, [activeImageIndex, isPlayingVideo, product.id]);
+  }, [activeImageIndex, isPlayingVideo, product.id, currentImageUrl]);
+
+  const handleImageError = () => {
+    setImageLoading(false);
+    const backupImg = product.backupImages?.[activeImageIndex];
+    if (backupImg && imageSrc !== backupImg) {
+      setImageSrc(backupImg);
+    } else {
+      setImageSrc("https://images.unsplash.com/photo-1542291026-7eec264c27ff?q=80&w=600&auto=format&fit=crop");
+    }
+  };
 
   // Lock background scroll when modal is open and handle Escape key to close
   useEffect(() => {
@@ -58,10 +76,6 @@ export default function ProductDetailsModal({
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [onClose]);
-
-  const images = product.images && product.images.filter(img => img && img.trim() !== "").length > 0 
-    ? product.images.filter(img => img && img.trim() !== "") 
-    : ["https://images.unsplash.com/photo-1544816155-12df9643f363?q=80&w=600&auto=format&fit=crop"];
 
   // Helper to parse and embed YouTube / Vimeo or return direct video url
   const getEmbedUrl = (url?: string) => {
@@ -178,9 +192,12 @@ export default function ProductDetailsModal({
                     )
                   ) : (
                     <img
-                      src={images[activeImageIndex]}
+                      ref={imgRef}
+                      src={imageSrc}
                       alt={product.name}
                       referrerPolicy="no-referrer"
+                      onLoad={() => setImageLoading(false)}
+                      onError={handleImageError}
                       className="w-full h-full object-contain p-2"
                     />
                   )}
@@ -204,24 +221,39 @@ export default function ProductDetailsModal({
               <div id="media-navigation-grid" className="flex flex-wrap gap-2.5 items-center">
                 
                 {/* Images Selector */}
-                {images.map((img, idx) => (
-                  <motion.button
-                    key={idx}
-                    whileHover={{ scale: 1.05 }}
-                    whileTap={{ scale: 0.95 }}
-                    onClick={() => {
-                      setActiveImageIndex(idx);
-                      setIsPlayingVideo(false);
-                    }}
-                    className={`w-14 h-14 rounded-xl overflow-hidden border bg-slate-50 transition-all ${
-                      activeImageIndex === idx && !isPlayingVideo
-                        ? "border-amber-500 scale-105 shadow-xs ring-2 ring-amber-500/20"
-                        : "border-slate-200 opacity-60 hover:opacity-100"
-                    }`}
-                  >
-                    <img src={img} alt={`Thumbnail ${idx}`} referrerPolicy="no-referrer" className="w-full h-full object-cover" />
-                  </motion.button>
-                ))}
+                {images.map((img, idx) => {
+                  const backupImg = product.backupImages?.[idx];
+                  return (
+                    <motion.button
+                      key={idx}
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={() => {
+                        setActiveImageIndex(idx);
+                        setIsPlayingVideo(false);
+                      }}
+                      className={`w-14 h-14 rounded-xl overflow-hidden border bg-slate-50 transition-all ${
+                        activeImageIndex === idx && !isPlayingVideo
+                          ? "border-amber-500 scale-105 shadow-xs ring-2 ring-amber-500/20"
+                          : "border-slate-200 opacity-60 hover:opacity-100"
+                      }`}
+                    >
+                      <img 
+                        src={img} 
+                        onError={(e) => {
+                          if (backupImg) {
+                            e.currentTarget.src = backupImg;
+                          } else {
+                            e.currentTarget.src = "https://images.unsplash.com/photo-1542291026-7eec264c27ff?q=80&w=600&auto=format&fit=crop";
+                          }
+                        }}
+                        alt={`Thumbnail ${idx}`} 
+                        referrerPolicy="no-referrer" 
+                        className="w-full h-full object-cover" 
+                      />
+                    </motion.button>
+                  );
+                })}
 
                 {/* Video Option Thumbnail */}
                 {product.videoUrl && (

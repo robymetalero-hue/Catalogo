@@ -74,6 +74,7 @@ service cloud.firestore {
              (!('retailPrice' in data) || (data.retailPrice is number && data.retailPrice >= 0)) &&
              (!('wholesalePrice' in data) || (data.wholesalePrice is number && data.wholesalePrice >= 0)) &&
              (!('images' in data) || (data.images is list && data.images.size() <= 10 && (data.images.size() == 0 || data.images[0] is string))) &&
+             (!('backupImages' in data) || (data.backupImages is list && data.backupImages.size() <= 10 && (data.backupImages.size() == 0 || data.backupImages[0] is string))) &&
              (!('videoUrl' in data) || (data.videoUrl is string && data.videoUrl.size() <= 1000)) &&
              (!('isAvailable' in data) || data.isAvailable is bool) &&
              (!('views' in data) || (data.views is number && data.views >= 0)) &&

@@ -74,6 +74,10 @@
           "type": "array",
           "description": "Lista de URLs de imágenes del producto"
         },
+        "backupImages": {
+          "type": "array",
+          "description": "Lista de imágenes en base64 de baja resolución optimizadas para respaldo sin pérdidas."
+        },
         "videoUrl": {
           "type": "string",
           "description": "URL de video de demostración (YouTube/Vimeo o enlace directo)"

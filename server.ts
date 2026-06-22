@@ -844,6 +844,7 @@ async function startServer() {
         retailPrice: Number(p.retailPrice) || 0,
         wholesalePrice: Number(p.wholesalePrice) || 0,
         images: p.images || [],
+        backupImages: p.backupImages || [],
         videoUrl: p.videoUrl || "",
         isAvailable: p.isAvailable ?? true,
         hidePrice: p.hidePrice ?? false,
@@ -884,6 +885,7 @@ async function startServer() {
       if (p.retailPrice !== undefined) updateData.retailPrice = Number(p.retailPrice) || 0;
       if (p.wholesalePrice !== undefined) updateData.wholesalePrice = Number(p.wholesalePrice) || 0;
       if (p.images !== undefined) updateData.images = p.images;
+      if (p.backupImages !== undefined) updateData.backupImages = p.backupImages;
       if (p.videoUrl !== undefined) updateData.videoUrl = p.videoUrl;
       if (p.isAvailable !== undefined) updateData.isAvailable = p.isAvailable;
       if (p.hidePrice !== undefined) updateData.hidePrice = p.hidePrice;
@@ -986,6 +988,7 @@ async function startServer() {
           retailPrice: finalRetail,
           wholesalePrice: finalWholesale,
           images: p.images || [],
+          backupImages: p.backupImages || [],
           videoUrl: p.videoUrl || "",
           isAvailable: p.isAvailable ?? true,
           views: Number(p.views) || 0,

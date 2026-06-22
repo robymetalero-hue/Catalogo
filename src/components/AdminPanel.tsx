@@ -18,8 +18,8 @@ interface AdminPanelProps {
   storeConfig: StoreConfig;
   setProducts: React.Dispatch<React.SetStateAction<Product[]>>;
   setStoreConfig: React.Dispatch<React.SetStateAction<StoreConfig>>;
-  onRefreshProducts: () => void;
-  onRefreshConfig: () => void;
+  onRefreshProducts: (silent?: boolean) => void;
+  onRefreshConfig: (silent?: boolean) => void;
   currentUser?: any | null;
 }
 
@@ -32,6 +32,7 @@ export interface UploadQueueItem {
   status: "pending" | "compressing" | "uploading" | "success" | "error";
   url: string | null;
   errorMsg: string | null;
+  backupBase64?: string;
 }
 
 const CATEGORY_PRESETS = ["Calzado", "Ropa", "Accesorios", "Hogar", "Tecnología", "Salud y Belleza", "Deportes", "Otros"];
@@ -45,6 +46,89 @@ export default function AdminPanel({
   onRefreshConfig,
   currentUser,
 }: AdminPanelProps) {
+  // Generic helper for resilient, zero-friction optimistic UI updates with automatic recovery (rollback) on failure
+  const executeProductsOptimistically = async (
+    getOptimisticNewState: (currentProducts: Product[]) => Product[],
+    asyncOperation: () => Promise<void>,
+    errorMessage: string
+  ) => {
+    // 1. Back up current state and cache
+    const previousProducts = [...products];
+    let previousCache: string | null = null;
+    try {
+      previousCache = localStorage.getItem("local_products_cache");
+    } catch (e) {}
+
+    // 2. Compute and immediately render the optimistic state
+    const optimisticProducts = getOptimisticNewState(products);
+    setProducts(optimisticProducts);
+    try {
+      localStorage.setItem("local_products_cache", JSON.stringify(optimisticProducts));
+    } catch (e) {}
+
+    try {
+      // 3. Execute the actual dynamic storage task (Firestore/API)
+      await asyncOperation();
+      
+      // 4. If successful, refresh the states in the background (silently) to align details
+      onRefreshProducts(true);
+    } catch (error: any) {
+      console.error(`[Optimistic Rollback] ${errorMessage}:`, error);
+      showToast(`${errorMessage}: ${error.message || error}`, "error");
+
+      // 5. ROLLBACK immediately to the previous state to maintain perfect safety
+      setProducts(previousProducts);
+      try {
+        if (previousCache !== null) {
+          localStorage.setItem("local_products_cache", previousCache);
+        } else {
+          localStorage.removeItem("local_products_cache");
+        }
+      } catch (e) {}
+    }
+  };
+
+  const executeStoreConfigOptimistically = async (
+    getOptimisticNewState: (currentStoreConfig: StoreConfig) => StoreConfig,
+    asyncOperation: () => Promise<void>,
+    errorMessage: string
+  ) => {
+    // 1. Back up current state and cache
+    const previousStoreConfig = { ...storeConfig };
+    let previousCache: string | null = null;
+    try {
+      previousCache = localStorage.getItem("local_store_config_cache");
+    } catch (e) {}
+
+    // 2. Compute and immediately render the optimistic state
+    const optimisticStoreConfig = getOptimisticNewState(storeConfig);
+    setStoreConfig(optimisticStoreConfig);
+    try {
+      localStorage.setItem("local_store_config_cache", JSON.stringify(optimisticStoreConfig));
+    } catch (e) {}
+
+    try {
+      // 3. Execute actual write task
+      await asyncOperation();
+
+      // 4. Perform background refresh
+      onRefreshConfig(true);
+    } catch (error: any) {
+      console.error(`[Optimistic Rollback] ${errorMessage}:`, error);
+      showToast(`${errorMessage}: ${error.message || error}`, "error");
+
+      // 5. ROLLBACK
+      setStoreConfig(previousStoreConfig);
+      try {
+        if (previousCache !== null) {
+          localStorage.setItem("local_store_config_cache", previousCache);
+        } else {
+          localStorage.removeItem("local_store_config_cache");
+        }
+      } catch (e) {}
+    }
+  };
+
   // Calculated engagement metrics for User Feedback & Interest Dashboard
   const totalViews = products.reduce((acc, p) => acc + (p.views || 0), 0);
   const totalClicks = products.reduce((acc, p) => acc + (p.whatsappClicks || 0), 0);
@@ -137,16 +221,28 @@ export default function AdminPanel({
     }
 
     setLoading(true);
-    try {
-      const payload = {
-        name: userFormName,
-        username: userFormUsername,
-        password: userFormPassword,
-        role: userFormRole,
-        preguntaSeguridad: userFormPregunta,
-        respuestaSeguridad: userFormRespuesta
-      };
+    const previousUsers = [...users];
+    const tempId = editingUserId || `user_${Date.now()}`;
+    const payload = {
+      id: tempId,
+      name: userFormName,
+      username: userFormUsername,
+      password: userFormPassword,
+      role: userFormRole,
+      preguntaSeguridad: userFormPregunta,
+      respuestaSeguridad: userFormRespuesta
+    };
 
+    let optimisticUsers = [...users];
+    if (editingUserId) {
+      optimisticUsers = users.map(u => u.id === editingUserId ? { ...u, ...payload } : u);
+    } else {
+      optimisticUsers = [...users, payload];
+    }
+    setUsers(optimisticUsers);
+    setIsEditingUser(false);
+
+    try {
       let res;
       if (editingUserId) {
         res = await fetch(`/api/users/${editingUserId}`, {
@@ -170,14 +266,15 @@ export default function AdminPanel({
 
       if (res.ok) {
         showToast(editingUserId ? "Usuario actualizado con éxito." : "Usuario creado con éxito.", "success");
-        setIsEditingUser(false);
         fetchUsers();
       } else {
         const errData = await res.json();
-        showToast(errData.error || "Error al guardar el usuario.", "error");
+        throw new Error(errData.error || "Error al guardar el usuario.");
       }
     } catch (err: any) {
+      console.error("[Optimistic Rollback] Error saving user:", err);
       showToast("Error de conexión: " + err.message, "error");
+      setUsers(previousUsers);
     } finally {
       setLoading(false);
     }
@@ -193,6 +290,9 @@ export default function AdminPanel({
     }
 
     setLoading(true);
+    const previousUsers = [...users];
+    setUsers(users.filter(u => u.id !== id));
+
     try {
       const res = await fetch(`/api/users/${id}`, {
         method: "DELETE",
@@ -206,10 +306,12 @@ export default function AdminPanel({
         fetchUsers();
       } else {
         const errData = await res.json();
-        showToast(errData.error || "Fallo al eliminar usuario.", "error");
+        throw new Error(errData.error || "Fallo al eliminar usuario.");
       }
     } catch (err: any) {
-      showToast("Error de conexión: " + err.message, "error");
+      console.error("[Optimistic Rollback] Error deleting user:", err);
+      showToast("Error al eliminar usuario: " + err.message, "error");
+      setUsers(previousUsers);
     } finally {
       setLoading(false);
     }
@@ -385,6 +487,54 @@ export default function AdminPanel({
     const sizes = ["B", "KB", "MB", "GB"];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+  };
+
+  // Helper to generate a highly-optimized base64 representation to act as persistent fallback directly inside Firestore documents
+  const createSmallBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve) => {
+      // If not an image, resolve empty
+      if (!file.type.startsWith("image/")) {
+        resolve("");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+          const MAX_SIZE = 280; // Compact but perfectly legible on cards/modals
+          let width = img.width;
+          let height = img.height;
+          if (width > height) {
+            if (width > MAX_SIZE) {
+              height = Math.round((height * MAX_SIZE) / width);
+              width = MAX_SIZE;
+            }
+          } else {
+            if (height > MAX_SIZE) {
+              width = Math.round((width * MAX_SIZE) / height);
+              height = MAX_SIZE;
+            }
+          }
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            resolve("");
+            return;
+          }
+          ctx.fillStyle = "#FFFFFF";
+          ctx.fillRect(0, 0, width, height);
+          ctx.drawImage(img, 0, 0, width, height);
+          const dataUrl = canvas.toDataURL("image/jpeg", 0.5); // high compression, low footprint (~5-9KB)
+          resolve(dataUrl);
+        };
+        img.onerror = () => resolve("");
+        img.src = event.target?.result as string;
+      };
+      reader.onerror = () => resolve("");
+      reader.readAsDataURL(file);
+    });
   };
 
   // Highly professional client-side image compression to support massive mega-pixel files
@@ -933,11 +1083,21 @@ export default function AdminPanel({
         });
       }
 
+      // Generate compact base64 backup for resilient client-side zero-loss recovery
+      let backupBase64: string | undefined = undefined;
+      if (processedFile && processedFile.type.startsWith("image/")) {
+        try {
+          backupBase64 = await createSmallBase64(processedFile);
+        } catch (base64Err) {
+          console.warn("[Backup Creator] Error generating resilient base64 fallback:", base64Err);
+        }
+      }
+
       // Successful completion of item
       setUploadQueue((prev) =>
         prev.map((q) =>
           q.id === itemId
-            ? { ...q, status: "success", progress: 100, url: uploadedUrl }
+            ? { ...q, status: "success", progress: 100, url: uploadedUrl, backupBase64 }
             : q
         )
       );
@@ -1216,7 +1376,8 @@ export default function AdminPanel({
       progress: 100,
       status: "success",
       url: url,
-      errorMsg: null
+      errorMsg: null,
+      backupBase64: product.backupImages && product.backupImages[i] ? product.backupImages[i] : undefined
     }));
     setUploadQueue(initialQueue);
     
@@ -1300,6 +1461,27 @@ export default function AdminPanel({
     const finalCategory = category === "Custom" ? newCustomCategory.trim() : category;
     const currentTime = new Date();
 
+    // Compile backupImages array in exact matching alignment with filteredImages list
+    const finalBackupImages: string[] = [];
+    filteredImages.forEach((imgUrl) => {
+      const qItem = uploadQueue.find((q) => q.url === imgUrl);
+      if (qItem && qItem.backupBase64) {
+        finalBackupImages.push(qItem.backupBase64);
+      } else {
+        if (editingProductId) {
+          const matchedProd = products.find((p) => p.id === editingProductId);
+          if (matchedProd && matchedProd.images && matchedProd.backupImages) {
+            const idx = matchedProd.images.indexOf(imgUrl);
+            if (idx !== -1 && matchedProd.backupImages[idx]) {
+              finalBackupImages.push(matchedProd.backupImages[idx]);
+              return;
+            }
+          }
+        }
+        finalBackupImages.push("");
+      }
+    });
+
     let updatedProductsList: Product[] = [];
     let savedMsg = "";
 
@@ -1312,6 +1494,7 @@ export default function AdminPanel({
       retailPrice: Number(retailPrice) || 0,
       wholesalePrice: Number(wholesalePrice) || 0,
       images: filteredImages,
+      backupImages: finalBackupImages,
       videoUrl: videoUrl.trim(),
       isAvailable: !!isAvailable,
       hidePrice: !!formHidePrice,
@@ -1335,156 +1518,141 @@ export default function AdminPanel({
       savedMsg = "Producto agregado al catálogo";
     }
 
-    // UPDATE LOCAL STATE AND CACHE INSTANTLY (IMMEDIATE REACTION)
-    setProducts(updatedProductsList);
-    try {
-      localStorage.setItem("local_products_cache", JSON.stringify(updatedProductsList));
-    } catch (e) {}
-
     setIsEditingProduct(false);
 
-    // Save directly to Google Cloud Firestore first (Client SDK)
-    try {
-      const fsPayload = {
-        ...reqObj,
-        createdAt: reqObj.createdAt ? (reqObj.createdAt instanceof Date ? reqObj.createdAt.toISOString() : reqObj.createdAt) : undefined,
-        updatedAt: reqObj.updatedAt ? (reqObj.updatedAt instanceof Date ? reqObj.updatedAt.toISOString() : reqObj.updatedAt) : undefined,
-      };
-      if (!editingProductId) {
-        fsPayload.id = id;
-      }
-      await setDoc(doc(db, "products", editingProductId || id), fsPayload, { merge: true });
-      console.log("[Firebase Client] Producto guardado directamente en Firestore!");
-    } catch (fsErr: any) {
-      console.warn("[Firebase Client] Error escribiendo producto en Firestore:", fsErr.message);
-    }
-
-    try {
-      // Save product directly to Google Cloud Firestore through Server API (as fallback/sync)
-      let res;
-      if (editingProductId) {
-        res = await fetch(`/api/products/${editingProductId}`, {
-          method: "PUT",
-          headers: { 
-            "Content-Type": "application/json",
-            "Authorization": currentUser?.uid || ""
-          },
-          body: JSON.stringify(reqObj)
-        });
-      } else {
-        const createObj = {
-          id,
-          ...reqObj
+    await executeProductsOptimistically(
+      () => updatedProductsList,
+      async () => {
+        // Save directly to Google Cloud Firestore first (Client SDK)
+        const fsPayload = {
+          ...reqObj,
+          createdAt: reqObj.createdAt ? (reqObj.createdAt instanceof Date ? reqObj.createdAt.toISOString() : reqObj.createdAt) : undefined,
+          updatedAt: reqObj.updatedAt ? (reqObj.updatedAt instanceof Date ? reqObj.updatedAt.toISOString() : reqObj.updatedAt) : undefined,
         };
-        res = await fetch("/api/products", {
-          method: "POST",
-          headers: { 
-            "Content-Type": "application/json",
-            "Authorization": currentUser?.uid || ""
-          },
-          body: JSON.stringify(createObj)
-        });
-      }
+        if (!editingProductId) {
+          fsPayload.id = id;
+        }
+        await setDoc(doc(db, "products", editingProductId || id), fsPayload, { merge: true });
+        console.log("[Firebase Client] Producto guardado directamente en Firestore!");
 
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || `HTTP ${res.status}`);
-      }
+        // Save product directly to Google Cloud Firestore through Server API (as fallback/sync)
+        let res;
+        if (editingProductId) {
+          res = await fetch(`/api/products/${editingProductId}`, {
+            method: "PUT",
+            headers: { 
+              "Content-Type": "application/json",
+              "Authorization": currentUser?.uid || ""
+            },
+            body: JSON.stringify(reqObj)
+          });
+        } else {
+          const createObj = {
+            id,
+            ...reqObj
+          };
+          res = await fetch("/api/products", {
+            method: "POST",
+            headers: { 
+              "Content-Type": "application/json",
+              "Authorization": currentUser?.uid || ""
+            },
+            body: JSON.stringify(createObj)
+          });
+        }
 
-      console.log("Producto guardado exitosamente en Firestore!");
-      showToast(savedMsg);
-      onRefreshProducts(); // Synchronize local state
-    } catch (error: any) {
-      console.error("Could not write product to Firestore:", error);
-      showToast(`Error al guardar producto en Firestore: ${error.message || error}`, "error");
-    } finally {
-      setLoading(false);
-    }
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.error || `HTTP ${res.status}`);
+        }
+
+        console.log("Producto guardado exitosamente en Firestore!");
+        showToast(savedMsg);
+      },
+      "Error al guardar producto en Firestore"
+    );
+
+    setLoading(false);
   };
 
   // Toggle individual product price visibility
   const handleToggleProductPrice = async (product: Product) => {
     const updatedVal = !product.hidePrice;
     
-    // Immediate UI feedback
-    setProducts(products.map(p => p.id === product.id ? { ...p, hidePrice: updatedVal } : p));
-    
-    try {
-      const productRef = doc(db, "products", product.id);
-      await updateDoc(productRef, {
-        hidePrice: updatedVal,
-        updatedAt: new Date().toISOString()
-      });
-      showToast(`Precios para "${product.name}" ahora están ${updatedVal ? "ocultos" : "visibles"}`);
-      // Fallback update on server too
-      await fetch(`/api/products/${product.id}`, {
-        method: "PUT",
-        headers: { 
-          "Content-Type": "application/json",
-          "Authorization": currentUser?.uid || ""
-        },
-        body: JSON.stringify({ hidePrice: updatedVal })
-      });
-    } catch (err: any) {
-      console.error("Error setting price visibility:", err);
-      showToast(`Error al cambiar visibilidad de precios: ${err.message}`, "error");
-    }
+    await executeProductsOptimistically(
+      (curr) => curr.map(p => p.id === product.id ? { ...p, hidePrice: updatedVal } : p),
+      async () => {
+        const productRef = doc(db, "products", product.id);
+        await updateDoc(productRef, {
+          hidePrice: updatedVal,
+          updatedAt: new Date().toISOString()
+        });
+        showToast(`Precios para "${product.name}" ahora están ${updatedVal ? "ocultos" : "visibles"}`);
+        
+        // Fallback update on server too
+        await fetch(`/api/products/${product.id}`, {
+          method: "PUT",
+          headers: { 
+            "Content-Type": "application/json",
+            "Authorization": currentUser?.uid || ""
+          },
+          body: JSON.stringify({ hidePrice: updatedVal })
+        });
+      },
+      `Error al cambiar visibilidad de precios para "${product.name}"`
+    );
   };
 
   // Toggle individual product structural visibility in the catalog
   const handleToggleProductVisibility = async (product: Product) => {
     const updatedVal = !product.isHidden;
     
-    // Immediate UI feedback
-    setProducts(products.map(p => p.id === product.id ? { ...p, isHidden: updatedVal } : p));
-    
-    try {
-      const productRef = doc(db, "products", product.id);
-      await updateDoc(productRef, {
-        isHidden: updatedVal,
-        updatedAt: new Date().toISOString()
-      });
-      showToast(`"${product.name}" ahora está ${updatedVal ? "oculto" : "visible"}`);
-      // Fallback update on server too
-      await fetch(`/api/products/${product.id}`, {
-        method: "PUT",
-        headers: { 
-          "Content-Type": "application/json",
-          "Authorization": currentUser?.uid || ""
-        },
-        body: JSON.stringify({ isHidden: updatedVal })
-      });
-    } catch (err: any) {
-      console.error("Error setting product visibility:", err);
-      showToast(`Error al cambiar visibilidad de producto: ${err.message}`, "error");
-    }
+    await executeProductsOptimistically(
+      (curr) => curr.map(p => p.id === product.id ? { ...p, isHidden: updatedVal } : p),
+      async () => {
+        const productRef = doc(db, "products", product.id);
+        await updateDoc(productRef, {
+          isHidden: updatedVal,
+          updatedAt: new Date().toISOString()
+        });
+        showToast(`"${product.name}" ahora está ${updatedVal ? "oculto" : "visible"}`);
+        
+        // Fallback update on server too
+        await fetch(`/api/products/${product.id}`, {
+          method: "PUT",
+          headers: { 
+            "Content-Type": "application/json",
+            "Authorization": currentUser?.uid || ""
+          },
+          body: JSON.stringify({ isHidden: updatedVal })
+        });
+      },
+      `Error al cambiar visibilidad de "${product.name}"`
+    );
   };
 
   // Update dynamic store categories
   const handleUpdateCategories = async (newCats: string[]) => {
+    const originalCats = [...categoriesList];
     setCategoriesList(newCats);
-    
+
     const updatedData: StoreConfig = {
       ...storeConfig,
       customCategories: newCats,
     } as any;
-    
-    setStoreConfig(updatedData);
-    try {
-      localStorage.setItem("local_store_config_cache", JSON.stringify(updatedData));
-    } catch (err) {}
 
-    try {
-      const fsPayload = {
-        ...updatedData,
-        updatedAt: new Date().toISOString()
-      };
-      await setDoc(doc(db, "storeConfig", "default"), fsPayload);
-      console.log("[Firebase Client] Categorías actualizadas en Firestore!");
-      onRefreshConfig();
-    } catch (fsErr: any) {
-      console.warn("[Firebase Client] Error escribiendo categorías a Firestore:", fsErr);
-    }
+    await executeStoreConfigOptimistically(
+      () => updatedData,
+      async () => {
+        const fsPayload = {
+          ...updatedData,
+          updatedAt: new Date().toISOString()
+        };
+        await setDoc(doc(db, "storeConfig", "default"), fsPayload);
+        console.log("[Firebase Client] Categorías actualizadas en Firestore!");
+      },
+      "Error escribiendo categorías a Firestore"
+    );
   };
 
   // Delete category and reassign items to "Otros"
@@ -1492,40 +1660,87 @@ export default function AdminPanel({
     if (window.confirm(`¿Estás seguro de que deseas eliminar la categoría "${catToRemove}"? Todos los productos en esta categoría se reasignarán automáticamente a la categoría "Otros".`)) {
       setLoading(true);
       const filteredCats = categoriesList.filter(c => c !== catToRemove);
-      
-      // Update local set first
+      if (!filteredCats.includes("Otros")) {
+        filteredCats.push("Otros");
+      }
+
+      const previousProducts = [...products];
+      const previousStoreConfig = { ...storeConfig };
+      const previousCategories = [...categoriesList];
+      let previousProductsCache: string | null = null;
+      let previousConfigCache: string | null = null;
+      try {
+        previousProductsCache = localStorage.getItem("local_products_cache");
+        previousConfigCache = localStorage.getItem("local_store_config_cache");
+      } catch (e) {}
+
+      // Apply optimistic update immediately
       const updatedProducts = products.map(p => p.category === catToRemove ? { ...p, category: "Otros" } : p);
       setProducts(updatedProducts);
-      
+      setCategoriesList(filteredCats);
+
+      const updatedConfig: StoreConfig = {
+        ...storeConfig,
+        customCategories: filteredCats,
+      } as any;
+      setStoreConfig(updatedConfig);
+
+      try {
+        localStorage.setItem("local_products_cache", JSON.stringify(updatedProducts));
+        localStorage.setItem("local_store_config_cache", JSON.stringify(updatedConfig));
+      } catch (e) {}
+
       try {
         const productsToUpdate = products.filter(p => p.category === catToRemove);
-        for (const prodToUpdate of productsToUpdate) {
-          const productRef = doc(db, "products", prodToUpdate.id);
-          await updateDoc(productRef, {
-            category: "Otros",
-            updatedAt: new Date().toISOString()
-          });
-          // Fallback update on server too
-          await fetch(`/api/products/${prodToUpdate.id}`, {
-            method: "PUT",
-            headers: { 
-              "Content-Type": "application/json",
-              "Authorization": currentUser?.uid || ""
-            },
-            body: JSON.stringify({ category: "Otros" })
-          });
-        }
-        
-        if (!filteredCats.includes("Otros")) {
-          filteredCats.push("Otros");
-        }
-        
-        await handleUpdateCategories(filteredCats);
+        await Promise.all(
+          productsToUpdate.map(async (prodToUpdate) => {
+            const productRef = doc(db, "products", prodToUpdate.id);
+            await updateDoc(productRef, {
+              category: "Otros",
+              updatedAt: new Date().toISOString()
+            });
+            // Fallback update on server too
+            await fetch(`/api/products/${prodToUpdate.id}`, {
+              method: "PUT",
+              headers: { 
+                "Content-Type": "application/json",
+                "Authorization": currentUser?.uid || ""
+              },
+              body: JSON.stringify({ category: "Otros" })
+            });
+          })
+        );
+
+        const fsPayload = {
+          ...updatedConfig,
+          updatedAt: new Date().toISOString()
+        };
+        await setDoc(doc(db, "storeConfig", "default"), fsPayload);
+        console.log("[Firebase Client] Categorías actualizadas en Firestore!");
+
         showToast(`Categoría "${catToRemove}" eliminada con éxito de la base de datos.`);
-        onRefreshProducts();
+        onRefreshProducts(true);
+        onRefreshConfig(true);
       } catch (err: any) {
-        console.error("Error removing category:", err);
+        console.error("[Optimistic Rollback] Error removing category:", err);
         showToast(`Error al remover categoría: ${err.message}`, "error");
+
+        // Rollback
+        setProducts(previousProducts);
+        setStoreConfig(previousStoreConfig);
+        setCategoriesList(previousCategories);
+        try {
+          if (previousProductsCache !== null) {
+            localStorage.setItem("local_products_cache", previousProductsCache);
+          } else {
+            localStorage.removeItem("local_products_cache");
+          }
+          if (previousConfigCache !== null) {
+            localStorage.setItem("local_store_config_cache", previousConfigCache);
+          } else {
+            localStorage.removeItem("local_store_config_cache");
+          }
+        } catch (e) {}
       } finally {
         setLoading(false);
       }
@@ -1556,45 +1771,35 @@ export default function AdminPanel({
     if (!confirm("¿Está seguro que desea eliminar este producto del catálogo?")) return;
     
     setLoading(true);
-    
-    // UPDATE LOCAL STATE AND CACHE INSTANTLY
     const updatedProductsList = products.filter(p => p.id !== id);
-    setProducts(updatedProductsList);
-    try {
-      localStorage.setItem("local_products_cache", JSON.stringify(updatedProductsList));
-    } catch (e) {}
 
-    // Delete directly from Firestore first (Client SDK)
-    try {
-      await deleteDoc(doc(db, "products", id));
-      console.log("[Firebase Client] Producto eliminado directamente de Firestore!");
-    } catch (fsErr: any) {
-      console.warn("[Firebase Client] Error eliminando producto directamente de Firestore:", fsErr.message);
-    }
+    await executeProductsOptimistically(
+      () => updatedProductsList,
+      async () => {
+        // Delete directly from Firestore first (Client SDK)
+        await deleteDoc(doc(db, "products", id));
+        console.log("[Firebase Client] Producto eliminado directamente de Firestore!");
 
-    try {
-      // Delete from Firestore directly through Server API (as fallback)
-      const res = await fetch(`/api/products/${id}`, {
-        method: "DELETE",
-        headers: { 
-          "Authorization": currentUser?.uid || ""
+        // Delete from Firestore directly through Server API (as fallback)
+        const res = await fetch(`/api/products/${id}`, {
+          method: "DELETE",
+          headers: { 
+            "Authorization": currentUser?.uid || ""
+          }
+        });
+
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.error || `HTTP ${res.status}`);
         }
-      });
 
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || `HTTP ${res.status}`);
-      }
+        console.log("Producto eliminado de Firestore!");
+        showToast("Producto eliminado del catálogo");
+      },
+      "Error al eliminar producto"
+    );
 
-      console.log("Producto eliminado de Firestore!");
-      showToast("Producto eliminado del catálogo");
-      onRefreshProducts(); // Synchronize local state
-    } catch (error: any) {
-      console.error("Could not delete product from Firestore:", error);
-      showToast(`Error al eliminar producto en Firestore: ${error.message || error}`, "error");
-    } finally {
-      setLoading(false);
-    }
+    setLoading(false);
   };
 
   return (
