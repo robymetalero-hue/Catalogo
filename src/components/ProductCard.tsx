@@ -15,6 +15,7 @@ interface ProductCardProps {
   whatsappCustomMessage?: string;
   onOpenDetails: (product: Product) => void;
   onWhatsAppInquiry?: (product: Product) => void;
+  index?: number;
 }
 
 const ProductCard: React.FC<ProductCardProps> = ({
@@ -24,6 +25,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
   whatsappCustomMessage,
   onOpenDetails,
   onWhatsAppInquiry,
+  index = 0,
 }) => {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [imageLoading, setImageLoading] = useState(true);
@@ -94,12 +96,12 @@ const ProductCard: React.FC<ProductCardProps> = ({
   return (
     <motion.div
       id={`product-card-${product.id}`}
-      className="group flex flex-col h-full bg-white rounded-2xl sm:rounded-3xl border border-slate-200/60 hover:border-amber-500/60 shadow-xs hover:shadow-xl hover:shadow-slate-900/5 overflow-hidden cursor-pointer relative select-none transition-all duration-500 hover:-translate-y-1.5"
+      className="group flex flex-col h-full bg-white rounded-2xl sm:rounded-3xl border border-slate-200/60 hover:border-amber-500/60 shadow-xs hover:shadow-xl hover:shadow-slate-900/5 overflow-hidden cursor-pointer relative select-none transition-all duration-500 hover:-translate-y-1.5 hover:scale-102"
       onClick={() => onOpenDetails(product)}
       initial={{ opacity: 0, y: 24 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true, margin: "-20px" }}
-      transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+      transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1], delay: index * 0.04 }}
     >
       {/* Image Gallery Container */}
       <div className="relative aspect-square w-full bg-slate-50/50 overflow-hidden border-b border-slate-100">

@@ -1127,7 +1127,7 @@ export default function App() {
                     className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-6"
                   >
                     <AnimatePresence mode="popLayout">
-                      {paginatedProducts.map((prod) => (
+                      {paginatedProducts.map((prod, idx) => (
                         <ProductCard
                           key={prod.id}
                           product={prod}
@@ -1136,6 +1136,7 @@ export default function App() {
                           whatsappCustomMessage={storeConfig.whatsappCustomMessage}
                           onOpenDetails={handleSelectProduct}
                           onWhatsAppInquiry={handleWhatsAppInquiry}
+                          index={idx}
                         />
                       ))}
                     </AnimatePresence>
