@@ -368,28 +368,23 @@ export default function App() {
         } else if (change.type === "modified") {
           // If modified, check if non-view/non-analytics fields changed
           if (oldProduct) {
-            const hasFieldChanges =
-              oldProduct.sku !== newDocData.sku ||
-              oldProduct.name !== newDocData.name ||
-              oldProduct.description !== newDocData.description ||
-              oldProduct.category !== newDocData.category ||
-              Number(oldProduct.retailPrice) !== Number(newDocData.retailPrice) ||
-              Number(oldProduct.wholesalePrice) !== Number(newDocData.wholesalePrice) ||
-              Boolean(oldProduct.isAvailable) !== Boolean(newDocData.isAvailable) ||
-              Boolean(oldProduct.hidePrice) !== Boolean(newDocData.hidePrice) ||
-              Boolean(oldProduct.isHidden) !== Boolean(newDocData.isHidden) ||
-              oldProduct.videoUrl !== newDocData.videoUrl ||
-              JSON.stringify(oldProduct.images) !== JSON.stringify(newDocData.images);
+            const changedFields: Record<string, { old: any; new: any }> = {};
+            if (oldProduct.sku !== newDocData.sku) changedFields.sku = { old: oldProduct.sku, new: newDocData.sku };
+            if (oldProduct.name !== newDocData.name) changedFields.name = { old: oldProduct.name, new: newDocData.name };
+            if (oldProduct.description !== newDocData.description) changedFields.description = { old: oldProduct.description, new: newDocData.description };
+            if (oldProduct.category !== newDocData.category) changedFields.category = { old: oldProduct.category, new: newDocData.category };
+            if (Number(oldProduct.retailPrice) !== Number(newDocData.retailPrice)) changedFields.retailPrice = { old: oldProduct.retailPrice, new: newDocData.retailPrice };
+            if (Number(oldProduct.wholesalePrice) !== Number(newDocData.wholesalePrice)) changedFields.wholesalePrice = { old: oldProduct.wholesalePrice, new: newDocData.wholesalePrice };
+            if (Boolean(oldProduct.isAvailable) !== Boolean(newDocData.isAvailable)) changedFields.isAvailable = { old: oldProduct.isAvailable, new: newDocData.isAvailable };
+            if (Boolean(oldProduct.hidePrice) !== Boolean(newDocData.hidePrice)) changedFields.hidePrice = { old: oldProduct.hidePrice, new: newDocData.hidePrice };
+            if (Boolean(oldProduct.isHidden) !== Boolean(newDocData.isHidden)) changedFields.isHidden = { old: oldProduct.isHidden, new: newDocData.isHidden };
+            if (oldProduct.videoUrl !== newDocData.videoUrl) changedFields.videoUrl = { old: oldProduct.videoUrl, new: newDocData.videoUrl };
+            if (JSON.stringify(oldProduct.images) !== JSON.stringify(newDocData.images)) changedFields.images = { old: oldProduct.images, new: newDocData.images };
+
+            const hasFieldChanges = Object.keys(changedFields).length > 0;
 
             if (hasFieldChanges) {
-              console.log(`[Firestore Listener] Cambio crítico detectado en el producto "${newDocData.name || docId}":`, {
-                sku: oldProduct.sku !== newDocData.sku,
-                name: oldProduct.name !== newDocData.name,
-                price: Number(oldProduct.retailPrice) !== Number(newDocData.retailPrice) || Number(oldProduct.wholesalePrice) !== Number(newDocData.wholesalePrice),
-                category: oldProduct.category !== newDocData.category,
-                availability: Boolean(oldProduct.isAvailable) !== Boolean(newDocData.isAvailable),
-                images: JSON.stringify(oldProduct.images) !== JSON.stringify(newDocData.images)
-              });
+              console.log(`[Firestore Listener] Cambio crítico detectado en el producto "${newDocData.name || docId}". Campos modificados:`, changedFields);
               hasRealVisualChanges = true;
               break;
             }
@@ -424,28 +419,31 @@ export default function App() {
       const newConfig = snapshot.data();
       const oldConfig = storeConfigRef.current;
       if (oldConfig && newConfig) {
-        const hasRealConfigChanges = 
-          oldConfig.storeName !== newConfig.storeName ||
-          oldConfig.address !== newConfig.address ||
-          oldConfig.phone !== newConfig.phone ||
-          oldConfig.whatsappNumber !== newConfig.whatsappNumber ||
-          oldConfig.whatsappCustomMessage !== newConfig.whatsappCustomMessage ||
-          oldConfig.locationUrl !== newConfig.locationUrl ||
-          Boolean(oldConfig.showPrices) !== Boolean(newConfig.showPrices) ||
-          Boolean(oldConfig.hideOutOfStock) !== Boolean(newConfig.hideOutOfStock) ||
-          Boolean(oldConfig.showLocation) !== Boolean(newConfig.showLocation) ||
-          oldConfig.bannerStyle !== newConfig.bannerStyle ||
-          oldConfig.promoBannerText !== newConfig.promoBannerText ||
-          JSON.stringify(oldConfig.storeImages) !== JSON.stringify(newConfig.storeImages) ||
-          JSON.stringify(oldConfig.customCategories) !== JSON.stringify(newConfig.customCategories);
+        const changedFields: Record<string, { old: any; new: any }> = {};
+        if (oldConfig.storeName !== newConfig.storeName) changedFields.storeName = { old: oldConfig.storeName, new: newConfig.storeName };
+        if (oldConfig.address !== newConfig.address) changedFields.address = { old: oldConfig.address, new: newConfig.address };
+        if (oldConfig.phone !== newConfig.phone) changedFields.phone = { old: oldConfig.phone, new: newConfig.phone };
+        if (oldConfig.whatsappNumber !== newConfig.whatsappNumber) changedFields.whatsappNumber = { old: oldConfig.whatsappNumber, new: newConfig.whatsappNumber };
+        if (oldConfig.whatsappCustomMessage !== newConfig.whatsappCustomMessage) changedFields.whatsappCustomMessage = { old: oldConfig.whatsappCustomMessage, new: newConfig.whatsappCustomMessage };
+        if (oldConfig.locationUrl !== newConfig.locationUrl) changedFields.locationUrl = { old: oldConfig.locationUrl, new: newConfig.locationUrl };
+        if (Boolean(oldConfig.showPrices) !== Boolean(newConfig.showPrices)) changedFields.showPrices = { old: oldConfig.showPrices, new: newConfig.showPrices };
+        if (Boolean(oldConfig.hideOutOfStock) !== Boolean(newConfig.hideOutOfStock)) changedFields.hideOutOfStock = { old: oldConfig.hideOutOfStock, new: newConfig.hideOutOfStock };
+        if (Boolean(oldConfig.showLocation) !== Boolean(newConfig.showLocation)) changedFields.showLocation = { old: oldConfig.showLocation, new: newConfig.showLocation };
+        if (oldConfig.bannerStyle !== newConfig.bannerStyle) changedFields.bannerStyle = { old: oldConfig.bannerStyle, new: newConfig.bannerStyle };
+        if (oldConfig.promoBannerText !== newConfig.promoBannerText) changedFields.promoBannerText = { old: oldConfig.promoBannerText, new: newConfig.promoBannerText };
+        if (JSON.stringify(oldConfig.storeImages) !== JSON.stringify(newConfig.storeImages)) changedFields.storeImages = { old: oldConfig.storeImages, new: newConfig.storeImages };
+        if (JSON.stringify(oldConfig.customCategories) !== JSON.stringify(newConfig.customCategories)) changedFields.customCategories = { old: oldConfig.customCategories, new: newConfig.customCategories };
+
+        const hasRealConfigChanges = Object.keys(changedFields).length > 0;
 
         if (!hasRealConfigChanges) {
           console.log("[Firestore Listener] Cambios en storeConfig ignorados (sin cambios visuales reales).");
           return;
+        } else {
+          console.log("[Firestore Listener] Se ha modificado la configuración crítica de la tienda. Campos modificados:", changedFields);
         }
       }
 
-      console.log("[Firestore Listener] Se ha modificado la configuración crítica de la tienda");
       setShowUpdatePrompt(true);
     }, (err) => {
       console.warn("[Firestore Listener] Error en listener de configuración:", err);
@@ -1111,7 +1109,7 @@ export default function App() {
                 ) : (
                   <motion.div 
                     layout
-                    className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"
+                    className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-6"
                   >
                     <AnimatePresence mode="popLayout">
                       {paginatedProducts.map((prod) => (

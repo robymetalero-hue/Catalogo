@@ -94,7 +94,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
   return (
     <motion.div
       id={`product-card-${product.id}`}
-      className="group flex flex-col h-full bg-white rounded-3xl border border-slate-200/60 hover:border-amber-500/60 shadow-xs hover:shadow-xl hover:shadow-slate-900/5 overflow-hidden cursor-pointer relative select-none transition-all duration-500 hover:-translate-y-1.5"
+      className="group flex flex-col h-full bg-white rounded-2xl sm:rounded-3xl border border-slate-200/60 hover:border-amber-500/60 shadow-xs hover:shadow-xl hover:shadow-slate-900/5 overflow-hidden cursor-pointer relative select-none transition-all duration-500 hover:-translate-y-1.5"
       onClick={() => onOpenDetails(product)}
       initial={{ opacity: 0, y: 24 }}
       whileInView={{ opacity: 1, y: 0 }}
@@ -106,7 +106,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
         {/* Skeleton Shimmer Overlay */}
         {imageLoading && (
           <div className="absolute inset-0 bg-slate-100 flex items-center justify-center z-10 transition-opacity duration-300">
-            <ImageIcon size={20} className="text-slate-300 animate-pulse" />
+            <ImageIcon size={16} className="text-slate-300 animate-pulse" />
           </div>
         )}
 
@@ -133,7 +133,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
 
         {/* Stock Availability Badge - Left side */}
         <span
-          className={`absolute top-4 left-4 px-2.5 py-1 text-[9px] font-extrabold tracking-wider rounded-full uppercase shadow-xs backdrop-blur-md border ${
+          className={`absolute top-2 left-2 sm:top-4 sm:left-4 px-1.5 py-0.5 sm:px-2.5 sm:py-1 text-[7px] sm:text-[9px] font-extrabold tracking-wider rounded-md sm:rounded-full uppercase shadow-xs backdrop-blur-md border ${
             product.isAvailable
               ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
               : "bg-rose-500/10 text-rose-500 border-rose-500/20"
@@ -145,12 +145,12 @@ const ProductCard: React.FC<ProductCardProps> = ({
         {/* Video Badge - Right side */}
         {product.videoUrl && (
           <motion.div 
-            className="absolute top-4 right-4 p-2 bg-slate-900/90 backdrop-blur-md text-amber-400 rounded-full shadow-xs border border-white/10" 
+            className="absolute top-2 right-2 sm:top-4 sm:right-4 p-1 sm:p-2 bg-slate-900/90 backdrop-blur-md text-amber-400 rounded-full shadow-xs border border-white/10" 
             title="Tiene video demostrativo"
             animate={{ scale: [1, 1.08, 1] }}
             transition={{ repeat: Infinity, duration: 2.5, ease: "easeInOut" }}
           >
-            <Video size={11} />
+            <Video size={10} className="sm:w-[11px] sm:h-[11px]" />
           </motion.div>
         )}
 
@@ -160,26 +160,26 @@ const ProductCard: React.FC<ProductCardProps> = ({
             {/* Soft, small, precise prev side button */}
             <button
               onClick={handlePrevImage}
-              className="absolute left-3 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center rounded-full bg-white/90 hover:bg-white text-slate-800 shadow-md backdrop-blur-xs transition-all duration-300 opacity-0 group-hover:opacity-100 hover:scale-105 active:scale-95 z-10"
+              className="absolute left-1.5 sm:left-3 top-1/2 -translate-y-1/2 w-6 h-6 sm:w-8 sm:h-8 flex items-center justify-center rounded-full bg-white/90 hover:bg-white text-slate-800 shadow-md backdrop-blur-xs transition-all duration-300 opacity-0 group-hover:opacity-100 hover:scale-105 active:scale-95 z-10"
               aria-label="Anterior imagen"
             >
-              <ChevronLeft size={14} className="stroke-[2.5]" />
+              <ChevronLeft size={12} className="stroke-[2.5]" />
             </button>
             <button
               onClick={handleNextImage}
-              className="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center rounded-full bg-white/90 hover:bg-white text-slate-800 shadow-md backdrop-blur-xs transition-all duration-300 opacity-0 group-hover:opacity-100 hover:scale-105 active:scale-95 z-10"
+              className="absolute right-1.5 sm:right-3 top-1/2 -translate-y-1/2 w-6 h-6 sm:w-8 sm:h-8 flex items-center justify-center rounded-full bg-white/90 hover:bg-white text-slate-800 shadow-md backdrop-blur-xs transition-all duration-300 opacity-0 group-hover:opacity-100 hover:scale-105 active:scale-95 z-10"
               aria-label="Siguiente imagen"
             >
-              <ChevronRight size={14} className="stroke-[2.5]" />
+              <ChevronRight size={12} className="stroke-[2.5]" />
             </button>
             
             {/* Elegant pagination pill indicators */}
-            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1 bg-slate-950/40 px-2.5 py-1.5 rounded-full backdrop-blur-xs z-10 opacity-70 group-hover:opacity-100 transition-opacity duration-300">
+            <div className="absolute bottom-2.5 sm:bottom-4 left-1/2 -translate-x-1/2 flex gap-1 bg-slate-950/40 px-1.5 py-1 sm:px-2.5 sm:py-1.5 rounded-full backdrop-blur-xs z-10 opacity-75 group-hover:opacity-100 transition-opacity duration-300">
               {images.map((_, idx) => (
                 <div
                   key={idx}
-                  className={`h-1 rounded-full transition-all duration-300 ${
-                    idx === currentImageIndex ? "bg-amber-400 w-3" : "bg-white/45 w-1"
+                  className={`h-0.5 sm:h-1 rounded-full transition-all duration-300 ${
+                    idx === currentImageIndex ? "bg-amber-400 w-2.5 sm:w-3" : "bg-white/45 w-1"
                   }`}
                 />
               ))}
@@ -189,61 +189,61 @@ const ProductCard: React.FC<ProductCardProps> = ({
       </div>
 
       {/* Content details */}
-      <div className="flex flex-col flex-grow p-5 bg-gradient-to-b from-white to-slate-50/20">
+      <div className="flex flex-col flex-grow p-2.5 sm:p-4 md:p-5 bg-gradient-to-b from-white to-slate-50/20">
         {/* Category & SKU row */}
-        <div className="flex justify-between items-center gap-2 mb-2.5">
-          <span className="px-2 py-0.5 text-[8px] uppercase tracking-widest font-black text-amber-700 bg-amber-500/8 rounded-md border border-amber-500/10">
+        <div className="flex justify-between items-center gap-1 mb-1 sm:mb-2 md:mb-2.5">
+          <span className="px-1.5 py-0.5 sm:px-2 text-[7px] sm:text-[8px] uppercase tracking-widest font-black text-amber-700 bg-amber-500/8 rounded-md border border-amber-500/10">
             {product.category || "General"}
           </span>
-          <span className="text-[9px] font-mono font-bold text-slate-400 bg-slate-50 border border-slate-100 px-1.5 py-0.5 rounded" title="SKU único del producto">
+          <span className="text-[7.5px] sm:text-[9px] font-mono font-bold text-slate-400 bg-slate-50 border border-slate-100 px-1 sm:px-1.5 py-0.5 rounded" title="SKU único del producto">
             {product.sku}
           </span>
         </div>
 
         {/* Title */}
-        <h3 className="font-sans font-extrabold text-slate-900 text-sm group-hover:text-amber-550 transition-colors tracking-tight line-clamp-1 mb-1 leading-snug">
+        <h3 className="font-sans font-extrabold text-slate-900 text-xs sm:text-sm group-hover:text-amber-550 transition-colors tracking-tight line-clamp-1 mb-0.5 sm:mb-1 leading-snug">
           {product.name}
         </h3>
 
         {/* Short Description */}
-        <p className="text-xs text-slate-500 line-clamp-2 md:line-clamp-2 mb-4 flex-grow leading-relaxed">
+        <p className="text-[10px] sm:text-xs text-slate-500 line-clamp-1 sm:line-clamp-2 mb-2 sm:mb-3 md:mb-4 flex-grow leading-tight sm:leading-relaxed">
           {product.description || "Este excelente producto está disponible en catálogo oficial."}
         </p>
 
         {/* Prices Row */}
-        <div className="mt-auto border-t border-slate-100 pt-3 flex flex-col gap-2.5">
+        <div className="mt-auto border-t border-slate-100 pt-1.5 sm:pt-2 md:pt-3 flex flex-col gap-1 sm:gap-2 md:gap-2.5">
           {showPrices && !product.hidePrice ? (
-            <div className="flex justify-between items-end py-0.5">
-              <div>
-                <span className="block text-[8px] text-slate-400 font-extrabold uppercase tracking-widest leading-none mb-1">Precio</span>
-                <span className="text-base font-black text-slate-900 tracking-tight leading-none">
+            <div className="flex flex-wrap justify-between items-baseline gap-x-1 gap-y-0.5 py-0.5">
+              <div className="min-w-0">
+                <span className="block text-[7px] sm:text-[8px] text-slate-400 font-extrabold uppercase tracking-widest leading-none mb-0.5">Precio</span>
+                <span className="text-xs sm:text-sm md:text-base font-black text-slate-900 tracking-tight leading-none whitespace-nowrap">
                   ${product.retailPrice.toLocaleString()}
                 </span>
               </div>
               {product.wholesalePrice > 0 && (
                 <div className="text-right">
-                  <span className="block text-[8px] text-slate-400 font-extrabold uppercase tracking-widest leading-none mb-1">Por mayor</span>
-                  <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-500/15 leading-none">
+                  <span className="block text-[7px] sm:text-[8px] text-slate-400 font-extrabold uppercase tracking-widest leading-none mb-0.5">Por mayor</span>
+                  <span className="text-[9px] sm:text-[10px] md:text-xs font-bold text-emerald-600 bg-emerald-50 px-1 sm:px-1.5 py-0.5 rounded border border-emerald-500/15 leading-none whitespace-nowrap">
                     ${product.wholesalePrice.toLocaleString()}
                   </span>
                 </div>
               )}
             </div>
           ) : (
-            <div className="bg-amber-500/5 border border-amber-500/15 rounded-xl py-2 px-3 text-center text-[11px] font-bold text-amber-700 flex items-center justify-center gap-1.5 leading-none shadow-3xs">
-              <Tag size={11} className="text-amber-500" />
+            <div className="bg-amber-500/5 border border-amber-500/15 rounded-lg sm:rounded-xl py-1 md:py-2 px-1.5 md:px-3 text-center text-[9px] sm:text-[10px] md:text-[11px] font-bold text-amber-700 flex items-center justify-center gap-1 select-none leading-none shadow-3xs">
+              <Tag size={10} className="text-amber-400" />
               <span>Consultar precios</span>
             </div>
           )}
 
           {/* Quick Contact buttons & details links */}
-          <div className="grid grid-cols-2 gap-2 mt-1">
+          <div className="grid grid-cols-2 gap-1 sm:gap-2 mt-0.5">
             <button
               onClick={(e) => {
                 e.stopPropagation();
                 onOpenDetails(product);
               }}
-              className="px-3 py-2 text-center text-[10px] font-extrabold uppercase tracking-wider bg-slate-50 hover:bg-slate-100 border border-slate-200/80 text-slate-700 rounded-xl transition-all cursor-pointer select-none active:scale-97"
+              className="px-1.5 py-1.5 sm:px-2.5 sm:py-2 text-center text-[9px] sm:text-[10px] font-extrabold uppercase tracking-wider bg-slate-50 hover:bg-slate-100 border border-slate-200/80 text-slate-700 rounded-lg sm:rounded-xl transition-all cursor-pointer select-none active:scale-97"
             >
               Ficha
             </button>
@@ -257,9 +257,9 @@ const ProductCard: React.FC<ProductCardProps> = ({
                   onWhatsAppInquiry(product);
                 }
               }}
-              className="flex items-center justify-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-white font-extrabold text-[10px] uppercase tracking-wider py-2 rounded-xl transition-all shadow-sm shadow-emerald-500/10 cursor-pointer select-none active:scale-97"
+              className="flex items-center justify-center gap-1 sm:gap-1.5 bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-white font-extrabold text-[9px] sm:text-[10px] uppercase tracking-wider py-1.5 sm:py-2 rounded-lg sm:rounded-xl transition-all shadow-sm shadow-emerald-500/10 cursor-pointer select-none active:scale-97"
             >
-              <Phone size={11} className="stroke-[2.5]" />
+              <Phone size={10} className="stroke-[2.5]" />
               <span>Consultar</span>
             </a>
           </div>
