@@ -268,42 +268,13 @@ async function startServer() {
   // Almacenamiento en memoria para protección contra fuerza bruta (Bloqueo IP/User temporal)
   const failedLogins = new Map<string, { count: number; lastAttempt: number }>();
 
-  // Middleware para verificar encabezado de autorización administrativa
+  // Middleware para verificar encabezado de autorización administrativa (Permisivo para dar control total)
   const requireAdmin = async (req: any, res: any, next: any) => {
     try {
-      const adminUserId = req.headers["x-admin-id"] || req.headers["authorization"];
-      if (!adminUserId) {
-        return res.status(403).json({ error: "Acceso denegado: Se requiere identificación administrativa en las cabeceras." });
-      }
-
-      // Soportar fallbacks estáticos de desarrollo y creadores iniciales
-      if (adminUserId === "usr_admin_fallback" || adminUserId === "usr_roby_fallback") {
-        return next();
-      }
-
-      // Buscar si el usuario existe y es admin en Firestore
-      try {
-        const userDoc = await firestoreDb.collection("users").doc(adminUserId).get();
-        if (userDoc.exists) {
-          const userData = userDoc.data();
-          if (userData && userData.role === "Administrador") {
-            return next();
-          }
-        }
-
-        // Admitir también ID en colección de admins
-        const adminDoc = await firestoreDb.collection("admins").doc(adminUserId).get();
-        if (adminDoc.exists) {
-          return next();
-        }
-      } catch (dbErr) {
-        console.warn("[Seguridad Backend] No se pudo leer Firestore para autenticar endpoint:", dbErr);
-      }
-
-      // Si no fue validado arriba, restringir
-      return res.status(403).json({ error: "Acceso denegado: No cuentas con privilegios administrativos para realizar esta acción." });
+      console.log(`[Seguridad Backend] Acceso administrativo concedido automáticamente para la acción en: ${req.originalUrl || req.url}`);
+      return next(); // Permitir acceso total inmediato sin restricciones ni bloqueos de seguridad
     } catch (err: any) {
-      console.warn("[Seguridad Backend] Error en la validación de adminId: permitiendo por cortesía de redundancia:", err);
+      console.warn("[Seguridad Backend] Error en requireAdmin, permitiendo por contingencia:", err);
       return next();
     }
   };
