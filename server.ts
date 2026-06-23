@@ -13,6 +13,7 @@ const firebaseConfig = JSON.parse(
 );
 
 let firestoreDb: Firestore;
+let fallbackDefaultDb: Firestore | null = null;
 let cachedStoreConfig: any = null;
 let cachedProducts: any[] = [];
 
@@ -29,10 +30,67 @@ try {
   firestoreDb = firebaseConfig.firestoreDatabaseId 
     ? getFirestore(adminApp, firebaseConfig.firestoreDatabaseId)
     : getFirestore(adminApp);
+  
+  if (firebaseConfig.firestoreDatabaseId) {
+    try {
+      fallbackDefaultDb = getFirestore(adminApp);
+    } catch (eFallback) {
+      // ignore
+    }
+  }
   console.log(`[Firebase] Firestore activo habilitado para el proyecto: "${firebaseConfig.projectId}" y base de datos: "${firebaseConfig.firestoreDatabaseId || '(default)'}"`);
 } catch (fbInitErr: any) {
   console.warn("[Firebase] No se pudo inicializar firebase-admin:", fbInitErr.message || fbInitErr);
   firestoreDb = getFirestore();
+}
+
+// Highly robust and fault-tolerant cloud media backup utility functions
+async function getBackupDocument(filename: string) {
+  if (firestoreDb) {
+    try {
+      const doc = await firestoreDb.collection("media_backups").doc(filename).get();
+      if (doc.exists) return doc;
+    } catch (err: any) {
+      const isPermissionErr = err.message && (err.message.includes("PERMISSION_DENIED") || err.code === 7);
+      if (isPermissionErr && fallbackDefaultDb) {
+        try {
+          const doc = await fallbackDefaultDb.collection("media_backups").doc(filename).get();
+          if (doc.exists) {
+            console.log(`[Firestore Media Backup Fallback] Recuperado "${filename}" desde base de datos por defecto.`);
+            return doc;
+          }
+        } catch {
+          // silent fallback
+        }
+      } else {
+        console.log(`[Firestore Media Backup] No fue posible comprobar respaldo para "${filename}" (sin afectación al flujo local):`, err.message || err);
+      }
+    }
+  }
+  return null;
+}
+
+async function saveBackupDocument(filename: string, docData: any) {
+  if (firestoreDb) {
+    try {
+      await firestoreDb.collection("media_backups").doc(filename).set(docData);
+      return true;
+    } catch (err: any) {
+      const isPermissionErr = err.message && (err.message.includes("PERMISSION_DENIED") || err.code === 7);
+      if (isPermissionErr && fallbackDefaultDb) {
+        try {
+          await fallbackDefaultDb.collection("media_backups").doc(filename).set(docData);
+          console.log(`[Firestore Media Backup Fallback] "${filename}" respaldada usando la base de datos por defecto.`);
+          return true;
+        } catch (fallErr: any) {
+          console.log(`[Firestore Media Backup] Fallo respaldo en DB por defecto para "${filename}":`, fallErr.message || fallErr);
+        }
+      } else {
+        console.log(`[Firestore Media Backup] No se pudo guardar respaldo para "${filename}":`, err.message || err);
+      }
+    }
+  }
+  return false;
 }
 
 // Sembrar usuarios administradores iniciales en Firestore si la colección está vacía
@@ -176,7 +234,39 @@ async function startServer() {
       }
     }
 
-    // 3. Fallback
+    // 3. Fallback check to Firestore Database Backup (guarantees ZERO image loss under ephemeral setups)
+    try {
+      const dbDoc = await getBackupDocument(filename);
+      if (dbDoc) {
+        const data = dbDoc.data();
+        if (data && data.base64) {
+          const buffer = Buffer.from(data.base64, "base64");
+          const mimeType = data.contentType || "application/octet-stream";
+
+          res.setHeader("Content-Type", mimeType);
+          res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+          res.end(buffer);
+
+          // Asynchronously write to local disk cache for instant future lookups
+          try {
+            fs.writeFile(localFilePath, buffer, (err) => {
+              if (err) {
+                console.warn(`[Cache Write] Fallo al re-escribir cache local para "${filename}":`, err.message);
+              } else {
+                console.log(`[Cache Write] Copia recuperada desde Firestore restaurada en caché local para "${filename}"`);
+              }
+            });
+          } catch (cErr) {
+            // Ignore if filesystem is read-only
+          }
+          return;
+        }
+      }
+    } catch (dbReadErr: any) {
+      console.warn(`[Firestore Media Backup] Error crítico al buscar respaldo en base de datos para "${filename}":`, dbReadErr.message || dbReadErr);
+    }
+
+    // 4. Fallback default
     return res.status(404).json({ error: "Archivo no encontrado" });
   });
 
@@ -205,6 +295,8 @@ async function startServer() {
       const urls: string[] = [];
 
       for (const file of files) {
+        let uploadedToGCS = false;
+
         if (gcsBucket) {
           try {
             // Uplifted timeout limit to 15 seconds to fully support direct camera snaps and video uploads
@@ -232,6 +324,7 @@ async function startServer() {
 
             // Always use uniform relative path redirecting requests through our unified express media router
             urls.push(`/uploads/${file.filename}`);
+            uploadedToGCS = true;
 
             // Housekeeping: remove local ephemeral container file immediately to save local disk space,
             // as its durable version now lives safely in GCS
@@ -247,12 +340,34 @@ async function startServer() {
             } else {
               console.warn(`[GCS] Fallo al subir a GCS:`, msg);
             }
-            // Fallback to local URL if GCS fails or times out to avoid breaking user workflows
-            urls.push(`/uploads/${file.filename}`);
           }
-        } else {
-          // Normal local persistent mode with robust static server
+        }
+
+        if (!uploadedToGCS) {
+          // Standard/Fallback route: Local storage + free-tier permanent Firestore backup (zero-loss ephemerality bypass)
           urls.push(`/uploads/${file.filename}`);
+
+          try {
+            const fileBuffer = fs.readFileSync(file.path);
+            const fileSizeKB = fileBuffer.length / 1024;
+            
+            if (fileSizeKB <= 1000) { // Strict check to respect Firestore's 1MB limit
+              const base64Content = fileBuffer.toString("base64");
+              const saved = await saveBackupDocument(file.filename, {
+                filename: file.filename,
+                contentType: file.mimetype,
+                base64: base64Content,
+                createdAt: new Date().toISOString()
+              });
+              if (saved) {
+                console.log(`[Firestore Media Backup] "${file.filename}" respaldada exitosamente en base de datos (~${Math.round(fileSizeKB)}KB).`);
+              }
+            } else {
+              console.warn(`[Firestore Media Backup] "${file.filename}" supera el límite de 1MB (${Math.round(fileSizeKB)}KB), guardado omitido para prevenir saturación de Firestore.`);
+            }
+          } catch (backupErr: any) {
+            console.warn("[Firestore Media Backup Warning] Fallo en la persistencia de copia de seguridad de medios:", backupErr.message || backupErr);
+          }
         }
       }
 

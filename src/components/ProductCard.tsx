@@ -94,24 +94,23 @@ const ProductCard: React.FC<ProductCardProps> = ({
   return (
     <motion.div
       id={`product-card-${product.id}`}
-      className="group flex flex-col h-full bg-white rounded-2xl border border-slate-100 hover:border-amber-400/80 shadow-xs hover:shadow-xl overflow-hidden cursor-pointer relative animate-fade-in transition-shadow duration-300"
+      className="group flex flex-col h-full bg-white rounded-3xl border border-slate-200/60 hover:border-amber-500/60 shadow-xs hover:shadow-xl hover:shadow-slate-900/5 overflow-hidden cursor-pointer relative select-none transition-all duration-500 hover:-translate-y-1.5"
       onClick={() => onOpenDetails(product)}
-      initial={{ opacity: 0, y: 16 }}
+      initial={{ opacity: 0, y: 24 }}
       whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-10px" }}
-      whileHover={{ scale: 1.012 }}
-      transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+      viewport={{ once: true, margin: "-20px" }}
+      transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
     >
       {/* Image Gallery Container */}
-      <div className="relative aspect-square w-full bg-slate-100 overflow-hidden">
+      <div className="relative aspect-square w-full bg-slate-50/50 overflow-hidden border-b border-slate-100">
         {/* Skeleton Shimmer Overlay */}
         {imageLoading && (
-          <div className="absolute inset-0 bg-slate-200/90 flex items-center justify-center z-10 transition-opacity duration-300">
-            <ImageIcon size={24} className="text-slate-400 animate-pulse" />
+          <div className="absolute inset-0 bg-slate-100 flex items-center justify-center z-10 transition-opacity duration-300">
+            <ImageIcon size={20} className="text-slate-300 animate-pulse" />
           </div>
         )}
 
-        <AnimatePresence mode="popLayout">
+        <AnimatePresence mode="wait">
           <motion.img
             key={currentImageIndex}
             ref={imgRef}
@@ -121,67 +120,66 @@ const ProductCard: React.FC<ProductCardProps> = ({
             loading="lazy"
             onLoad={() => setImageLoading(false)}
             onError={handleImageError}
-            initial={{ opacity: 0, scale: 0.98 }}
-            animate={{ opacity: imageLoading ? 0 : 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 1.02 }}
-            transition={{ duration: 0.35, ease: "easeOut" }}
-            className="w-full h-full object-cover group-hover:scale-106 transition-transform duration-500 ease-out absolute inset-0 font-sans"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: imageLoading ? 0 : 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.4, ease: "easeInOut" }}
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-705 ease-[0.16,1,0.3,1] absolute inset-0 font-sans"
           />
         </AnimatePresence>
 
-        {/* Subtle hover zoom overlay for absolute premium feel */}
-        <div className="absolute inset-0 bg-black/2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
+        {/* Subtle shadow overlay that activates on hover */}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
 
-        {/* Stock Availability Badge */}
+        {/* Stock Availability Badge - Left side */}
         <span
-          className={`absolute top-3 left-3 px-2.5 py-1 text-[10px] font-bold tracking-wider rounded-lg uppercase shadow-xs ${
+          className={`absolute top-4 left-4 px-2.5 py-1 text-[9px] font-extrabold tracking-wider rounded-full uppercase shadow-xs backdrop-blur-md border ${
             product.isAvailable
-              ? "bg-slate-900/90 text-emerald-400 backdrop-blur-xs border border-emerald-500/20"
-              : "bg-rose-550/95 text-white shadow-md shadow-rose-500/10"
+              ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
+              : "bg-rose-500/10 text-rose-500 border-rose-500/20"
           }`}
         >
           {product.isAvailable ? "Disponible" : "Sin Stock"}
         </span>
 
-        {/* Video Badge */}
+        {/* Video Badge - Right side */}
         {product.videoUrl && (
           <motion.div 
-            className="absolute top-3 right-3 p-2 bg-slate-950/85 backdrop-blur-xs text-amber-500 rounded-xl shadow-sm border border-white/10" 
+            className="absolute top-4 right-4 p-2 bg-slate-900/90 backdrop-blur-md text-amber-400 rounded-full shadow-xs border border-white/10" 
             title="Tiene video demostrativo"
-            animate={{ scale: [1, 1.1, 1] }}
-            transition={{ repeat: Infinity, duration: 2, ease: "easeInOut" }}
+            animate={{ scale: [1, 1.08, 1] }}
+            transition={{ repeat: Infinity, duration: 2.5, ease: "easeInOut" }}
           >
-            <Video size={13} />
+            <Video size={11} />
           </motion.div>
         )}
 
-        {/* Image Counters & Navigation */}
+        {/* Image Counters & Navigation with dynamic slides indicator */}
         {images.length > 1 && (
           <>
-            <motion.button
+            {/* Soft, small, precise prev side button */}
+            <button
               onClick={handlePrevImage}
-              whileHover={{ scale: 1.1 }}
-              whileTap={{ scale: 0.9 }}
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 p-2 rounded-xl bg-white/90 hover:bg-white text-slate-800 shadow-sm backdrop-blur-xs transition-colors opacity-0 group-hover:opacity-100"
+              className="absolute left-3 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center rounded-full bg-white/90 hover:bg-white text-slate-800 shadow-md backdrop-blur-xs transition-all duration-300 opacity-0 group-hover:opacity-100 hover:scale-105 active:scale-95 z-10"
               aria-label="Anterior imagen"
             >
-              <ChevronLeft size={14} />
-            </motion.button>
-            <motion.button
+              <ChevronLeft size={14} className="stroke-[2.5]" />
+            </button>
+            <button
               onClick={handleNextImage}
-              whileHover={{ scale: 1.1 }}
-              whileTap={{ scale: 0.9 }}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 p-2 rounded-xl bg-white/90 hover:bg-white text-slate-800 shadow-sm backdrop-blur-xs transition-colors opacity-0 group-hover:opacity-100"
+              className="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center rounded-full bg-white/90 hover:bg-white text-slate-800 shadow-md backdrop-blur-xs transition-all duration-300 opacity-0 group-hover:opacity-100 hover:scale-105 active:scale-95 z-10"
               aria-label="Siguiente imagen"
             >
-              <ChevronRight size={14} />
-            </motion.button>
-            <div className="absolute bottom-3.5 left-1/2 -translate-x-1/2 flex gap-1.5 bg-slate-950/45 px-2.5 py-1.5 rounded-full backdrop-blur-xs">
+              <ChevronRight size={14} className="stroke-[2.5]" />
+            </button>
+            
+            {/* Elegant pagination pill indicators */}
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1 bg-slate-950/40 px-2.5 py-1.5 rounded-full backdrop-blur-xs z-10 opacity-70 group-hover:opacity-100 transition-opacity duration-300">
               {images.map((_, idx) => (
                 <div
                   key={idx}
-                  className={`w-1.5 h-1.5 rounded-full transition-all duration-300 ${
-                    idx === currentImageIndex ? "bg-amber-400 w-3" : "bg-white/40"
+                  className={`h-1 rounded-full transition-all duration-300 ${
+                    idx === currentImageIndex ? "bg-amber-400 w-3" : "bg-white/45 w-1"
                   }`}
                 />
               ))}
@@ -191,69 +189,65 @@ const ProductCard: React.FC<ProductCardProps> = ({
       </div>
 
       {/* Content details */}
-      <div className="flex flex-col flex-grow p-4.5 bg-gradient-to-b from-white to-slate-25/30">
-        {/* Category & SKU */}
-        <div className="flex justify-between items-center gap-2 mb-2">
-          <span className="px-2.5 py-0.5 text-[9px] uppercase tracking-wider font-extrabold text-amber-700 bg-amber-50 rounded-md border border-amber-500/10">
+      <div className="flex flex-col flex-grow p-5 bg-gradient-to-b from-white to-slate-50/20">
+        {/* Category & SKU row */}
+        <div className="flex justify-between items-center gap-2 mb-2.5">
+          <span className="px-2 py-0.5 text-[8px] uppercase tracking-widest font-black text-amber-700 bg-amber-500/8 rounded-md border border-amber-500/10">
             {product.category || "General"}
           </span>
-          <span className="text-[10px] font-mono font-bold text-slate-400 bg-slate-50 border border-slate-100 px-1.5 py-0.5 rounded-sm" title="SKU único">
-            SKU: {product.sku}
+          <span className="text-[9px] font-mono font-bold text-slate-400 bg-slate-50 border border-slate-100 px-1.5 py-0.5 rounded" title="SKU único del producto">
+            {product.sku}
           </span>
         </div>
 
         {/* Title */}
-        <h3 className="font-sans font-bold text-slate-900 text-sm group-hover:text-amber-600 transition-colors tracking-tight line-clamp-1 mb-1">
+        <h3 className="font-sans font-extrabold text-slate-900 text-sm group-hover:text-amber-550 transition-colors tracking-tight line-clamp-1 mb-1 leading-snug">
           {product.name}
         </h3>
 
         {/* Short Description */}
-        <p className="text-xs text-slate-500 line-clamp-2 mb-4 flex-grow leading-relaxed">
-          {product.description || "Sin descripción detallada disponible."}
+        <p className="text-xs text-slate-500 line-clamp-2 md:line-clamp-2 mb-4 flex-grow leading-relaxed">
+          {product.description || "Este excelente producto está disponible en catálogo oficial."}
         </p>
 
         {/* Prices Row */}
-        <div className="mt-auto border-t border-slate-100/80 pt-3.5 flex flex-col gap-2">
+        <div className="mt-auto border-t border-slate-100 pt-3 flex flex-col gap-2.5">
           {showPrices && !product.hidePrice ? (
-            <div className="flex justify-between items-end">
+            <div className="flex justify-between items-end py-0.5">
               <div>
-                <span className="block text-[9px] text-slate-400 font-extrabold uppercase tracking-widest leading-none mb-1">Unidad</span>
-                <span className="text-lg font-extrabold text-slate-950 tracking-tight leading-none">
+                <span className="block text-[8px] text-slate-400 font-extrabold uppercase tracking-widest leading-none mb-1">Precio</span>
+                <span className="text-base font-black text-slate-900 tracking-tight leading-none">
                   ${product.retailPrice.toLocaleString()}
                 </span>
               </div>
               {product.wholesalePrice > 0 && (
                 <div className="text-right">
-                  <span className="block text-[9px] text-slate-400 font-extrabold uppercase tracking-widest leading-none mb-1">Por Mayor</span>
-                  <span className="text-sm font-bold text-emerald-600 leading-none">
+                  <span className="block text-[8px] text-slate-400 font-extrabold uppercase tracking-widest leading-none mb-1">Por mayor</span>
+                  <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-500/15 leading-none">
                     ${product.wholesalePrice.toLocaleString()}
                   </span>
                 </div>
               )}
             </div>
           ) : (
-            <div className="bg-amber-50/40 border border-amber-500/15 rounded-xl py-2 px-3 text-center text-xs font-semibold text-amber-800 flex items-center justify-center gap-1.5">
-              <Tag size={12} className="text-amber-500 animate-pulse" />
+            <div className="bg-amber-500/5 border border-amber-500/15 rounded-xl py-2 px-3 text-center text-[11px] font-bold text-amber-700 flex items-center justify-center gap-1.5 leading-none shadow-3xs">
+              <Tag size={11} className="text-amber-500" />
               <span>Consultar precios</span>
             </div>
           )}
 
           {/* Quick Contact buttons & details links */}
-          <div className="grid grid-cols-2 gap-2 mt-2">
-            <motion.button
-              whileHover={{ scale: 1.05, y: -1 }}
-              whileTap={{ scale: 0.93 }}
+          <div className="grid grid-cols-2 gap-2 mt-1">
+            <button
               onClick={(e) => {
                 e.stopPropagation();
                 onOpenDetails(product);
               }}
-              className="px-3 py-2 text-center text-[11px] font-bold uppercase tracking-wider bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-xl transition-all cursor-pointer"
+              className="px-3 py-2 text-center text-[10px] font-extrabold uppercase tracking-wider bg-slate-50 hover:bg-slate-100 border border-slate-200/80 text-slate-700 rounded-xl transition-all cursor-pointer select-none active:scale-97"
             >
-              Ver ficha
-            </motion.button>
-            <motion.a
-              whileHover={{ scale: 1.05, y: -1, boxShadow: "0 6px 15px rgba(16, 185, 129, 0.25)" }}
-              whileTap={{ scale: 0.93 }}
+              Ficha
+            </button>
+            <a
               href={getWhatsAppLink()}
               target="_blank"
               rel="noopener noreferrer"
@@ -263,11 +257,11 @@ const ProductCard: React.FC<ProductCardProps> = ({
                   onWhatsAppInquiry(product);
                 }
               }}
-              className="flex items-center justify-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-[11px] uppercase tracking-wider py-2 rounded-xl transition-all shadow-md shadow-emerald-500/10 cursor-pointer"
+              className="flex items-center justify-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-white font-extrabold text-[10px] uppercase tracking-wider py-2 rounded-xl transition-all shadow-sm shadow-emerald-500/10 cursor-pointer select-none active:scale-97"
             >
-              <Phone size={12} />
+              <Phone size={11} className="stroke-[2.5]" />
               <span>Consultar</span>
-            </motion.a>
+            </a>
           </div>
         </div>
       </div>

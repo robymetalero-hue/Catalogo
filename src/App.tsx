@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Product, StoreConfig, AdminUser } from "./types";
 import { db, auth } from "./firebase";
 import { 
@@ -14,7 +14,8 @@ import {
   collection, getDocs, doc, getDoc, updateDoc, query, orderBy, setDoc, onSnapshot 
 } from "firebase/firestore";
 import { 
-  Lock, LogOut, CheckCircle2, ShoppingBag, Grid, Compass, Smartphone, AlertCircle, X, ShieldAlert, Share2, Sparkles, HelpCircle, Send, ArrowLeft, RefreshCw
+  Lock, LogOut, CheckCircle2, ShoppingBag, Grid, Compass, Smartphone, AlertCircle, X, ShieldAlert, Share2, Sparkles, HelpCircle, Send, ArrowLeft, RefreshCw,
+  ChevronLeft, ChevronRight
 } from "lucide-react";
 import StoreHeader from "./components/StoreHeader";
 import StoreFooter from "./components/StoreFooter";
@@ -75,11 +76,33 @@ export default function App() {
   });
   const [selectedCategory, setSelectedCategory] = useState("Todos");
   const [searchQuery, setSearchQuery] = useState("");
+  
+  // Pagination States
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(12);
+
+  // Reset page to 1 when search query or category is modified
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedCategory, searchQuery]);
+
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [shareToast, setShareToast] = useState<string | null>(null);
   const [isShareOpen, setIsShareOpen] = useState(false);
   const [activeViewTab, setActiveViewTab] = useState<"catalog" | "location">("catalog");
   const [showUpdatePrompt, setShowUpdatePrompt] = useState(false);
+
+  // Synchronization refs for smart update prompts (ignores analytical clicks/views)
+  const productsRef = useRef<Product[]>([]);
+  const storeConfigRef = useRef<StoreConfig | null>(null);
+
+  useEffect(() => {
+    productsRef.current = products;
+  }, [products]);
+
+  useEffect(() => {
+    storeConfigRef.current = storeConfig;
+  }, [storeConfig]);
 
   // Authentication & Admin states
   const [user, setUser] = useState<AdminUser | null>(() => {
@@ -322,8 +345,66 @@ export default function App() {
         return;
       }
 
-      console.log("[Firestore Listener] Se ha modificado un producto en Firestore");
-      setShowUpdatePrompt(true);
+      // Check if there is any real visual/critical change to any of the products
+      let hasRealVisualChanges = false;
+
+      for (const change of snapshot.docChanges()) {
+        const docId = change.doc.id;
+        const newDocData = change.doc.data() as any;
+        const oldProduct = productsRef.current.find(p => p.id === docId);
+
+        if (change.type === "added") {
+          // If a product is added but isn't in our current local list, it's a real new product.
+          if (!oldProduct) {
+            hasRealVisualChanges = true;
+            break;
+          }
+        } else if (change.type === "removed") {
+          // If a product is removed and we currently have it, it's a real removal.
+          if (oldProduct) {
+            hasRealVisualChanges = true;
+            break;
+          }
+        } else if (change.type === "modified") {
+          // If modified, check if non-view/non-analytics fields changed
+          if (oldProduct) {
+            const hasFieldChanges =
+              oldProduct.sku !== newDocData.sku ||
+              oldProduct.name !== newDocData.name ||
+              oldProduct.description !== newDocData.description ||
+              oldProduct.category !== newDocData.category ||
+              Number(oldProduct.retailPrice) !== Number(newDocData.retailPrice) ||
+              Number(oldProduct.wholesalePrice) !== Number(newDocData.wholesalePrice) ||
+              Boolean(oldProduct.isAvailable) !== Boolean(newDocData.isAvailable) ||
+              Boolean(oldProduct.hidePrice) !== Boolean(newDocData.hidePrice) ||
+              Boolean(oldProduct.isHidden) !== Boolean(newDocData.isHidden) ||
+              oldProduct.videoUrl !== newDocData.videoUrl ||
+              JSON.stringify(oldProduct.images) !== JSON.stringify(newDocData.images);
+
+            if (hasFieldChanges) {
+              console.log(`[Firestore Listener] Cambio crítico detectado en el producto "${newDocData.name || docId}":`, {
+                sku: oldProduct.sku !== newDocData.sku,
+                name: oldProduct.name !== newDocData.name,
+                price: Number(oldProduct.retailPrice) !== Number(newDocData.retailPrice) || Number(oldProduct.wholesalePrice) !== Number(newDocData.wholesalePrice),
+                category: oldProduct.category !== newDocData.category,
+                availability: Boolean(oldProduct.isAvailable) !== Boolean(newDocData.isAvailable),
+                images: JSON.stringify(oldProduct.images) !== JSON.stringify(newDocData.images)
+              });
+              hasRealVisualChanges = true;
+              break;
+            }
+          } else {
+            // A modified doc we didn't track before works like an add.
+            hasRealVisualChanges = true;
+            break;
+          }
+        }
+      }
+
+      if (hasRealVisualChanges) {
+        console.log("[Firestore Listener] Se ha modificado críticamente un nuevo artículo o parámetros de catálogo.");
+        setShowUpdatePrompt(true);
+      }
     }, (err) => {
       console.warn("[Firestore Listener] Error en listener de productos:", err);
     });
@@ -340,7 +421,31 @@ export default function App() {
         return;
       }
 
-      console.log("[Firestore Listener] Se ha modificado la configuración de la tienda");
+      const newConfig = snapshot.data();
+      const oldConfig = storeConfigRef.current;
+      if (oldConfig && newConfig) {
+        const hasRealConfigChanges = 
+          oldConfig.storeName !== newConfig.storeName ||
+          oldConfig.address !== newConfig.address ||
+          oldConfig.phone !== newConfig.phone ||
+          oldConfig.whatsappNumber !== newConfig.whatsappNumber ||
+          oldConfig.whatsappCustomMessage !== newConfig.whatsappCustomMessage ||
+          oldConfig.locationUrl !== newConfig.locationUrl ||
+          Boolean(oldConfig.showPrices) !== Boolean(newConfig.showPrices) ||
+          Boolean(oldConfig.hideOutOfStock) !== Boolean(newConfig.hideOutOfStock) ||
+          Boolean(oldConfig.showLocation) !== Boolean(newConfig.showLocation) ||
+          oldConfig.bannerStyle !== newConfig.bannerStyle ||
+          oldConfig.promoBannerText !== newConfig.promoBannerText ||
+          JSON.stringify(oldConfig.storeImages) !== JSON.stringify(newConfig.storeImages) ||
+          JSON.stringify(oldConfig.customCategories) !== JSON.stringify(newConfig.customCategories);
+
+        if (!hasRealConfigChanges) {
+          console.log("[Firestore Listener] Cambios en storeConfig ignorados (sin cambios visuales reales).");
+          return;
+        }
+      }
+
+      console.log("[Firestore Listener] Se ha modificado la configuración crítica de la tienda");
       setShowUpdatePrompt(true);
     }, (err) => {
       console.warn("[Firestore Listener] Error en listener de configuración:", err);
@@ -744,6 +849,42 @@ export default function App() {
     return matchesCategory && matchesSearch;
   });
 
+  // Dynamic Pagination Calculations
+  const totalItems = filteredProducts.length;
+  const actualItemsPerPage = itemsPerPage === -1 ? totalItems : itemsPerPage;
+  const totalPages = Math.ceil(totalItems / actualItemsPerPage) || 1;
+  const startIndex = (currentPage - 1) * actualItemsPerPage;
+  const endIndex = startIndex + actualItemsPerPage;
+  const paginatedProducts = itemsPerPage === -1 ? filteredProducts : filteredProducts.slice(startIndex, endIndex);
+
+  const getPageNumbers = () => {
+    const pages: (number | string)[] = [];
+    if (totalPages <= 5) {
+      for (let i = 1; i <= totalPages; i++) {
+        pages.push(i);
+      }
+    } else {
+      pages.push(1);
+      if (currentPage > 3) {
+        pages.push("...");
+      }
+      
+      const start = Math.max(2, currentPage - 1);
+      const end = Math.min(totalPages - 1, currentPage + 1);
+      
+      for (let i = start; i <= end; i++) {
+        pages.push(i);
+      }
+      
+      if (currentPage < totalPages - 2) {
+        pages.push("...");
+      }
+      
+      pages.push(totalPages);
+    }
+    return pages;
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-800 antialiased selection:bg-amber-100 selection:text-amber-900">
       
@@ -973,7 +1114,7 @@ export default function App() {
                     className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"
                   >
                     <AnimatePresence mode="popLayout">
-                      {filteredProducts.map((prod) => (
+                      {paginatedProducts.map((prod) => (
                         <ProductCard
                           key={prod.id}
                           product={prod}
@@ -986,6 +1127,105 @@ export default function App() {
                       ))}
                     </AnimatePresence>
                   </motion.div>
+                )}
+
+                {/* Pagination Controls */}
+                {filteredProducts.length > 0 && (
+                  <div className="mt-8 flex flex-col sm:flex-row items-center justify-between gap-4 bg-white px-6 py-4 rounded-2xl border border-slate-200/80 shadow-3xs">
+                    {/* Items Indicator & Items Per Page Selector */}
+                    <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto text-xs text-slate-500 font-medium text-center sm:text-left">
+                      <span>
+                        Mostrando <strong className="text-slate-900 font-semibold">{(filteredProducts.length === 0 ? 0 : startIndex + 1)} - {Math.min(endIndex, totalItems)}</strong> de <strong className="text-slate-900 font-semibold">{totalItems}</strong> productos
+                      </span>
+                      
+                      <span className="hidden sm:inline text-slate-300">|</span>
+                      
+                      <div className="flex items-center gap-2 justify-center">
+                        <span>Mostrar:</span>
+                        <select
+                          id="items-per-page-select"
+                          value={itemsPerPage}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value);
+                            setItemsPerPage(val);
+                            setCurrentPage(1);
+                          }}
+                          className="bg-slate-50 border border-slate-200 text-slate-800 text-xs rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-amber-500 font-semibold cursor-pointer"
+                        >
+                          <option value={12}>12 por pág.</option>
+                          <option value={24}>24 por pág.</option>
+                          <option value={48}>48 por pág.</option>
+                          <option value={-1}>Ver Todos</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Navigation Buttons */}
+                    {totalPages > 1 && (
+                      <div className="flex items-center gap-1.5 self-center">
+                        {/* First / Back Button */}
+                        <button
+                          onClick={() => {
+                            if (currentPage > 1) {
+                              setCurrentPage(currentPage - 1);
+                              window.scrollTo({ top: 350, behavior: "smooth" });
+                            }
+                          }}
+                          disabled={currentPage === 1}
+                          className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 active:bg-slate-100 disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors cursor-pointer"
+                          title="Página Anterior"
+                        >
+                          <ChevronLeft size={16} />
+                        </button>
+
+                        {/* Page Numbers */}
+                        <div className="flex items-center gap-1">
+                          {getPageNumbers().map((pageNum, index) => {
+                            if (pageNum === "...") {
+                              return (
+                                <span key={`dots-${index}`} className="px-2 text-slate-400 text-xs font-bold select-none">
+                                  ...
+                                </span>
+                              );
+                            }
+
+                            const isCurrent = pageNum === currentPage;
+                            return (
+                              <button
+                                key={`page-${pageNum}`}
+                                onClick={() => {
+                                  setCurrentPage(pageNum as number);
+                                  window.scrollTo({ top: 350, behavior: "smooth" });
+                                }}
+                                className={`min-w-8 h-8 flex items-center justify-center text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                                  isCurrent
+                                    ? "bg-amber-500 text-slate-950 font-extrabold shadow-sm shadow-amber-500/10"
+                                    : "border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                                }`}
+                              >
+                                {pageNum}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* Next / Last Button */}
+                        <button
+                          onClick={() => {
+                            if (currentPage < totalPages) {
+                              setCurrentPage(currentPage + 1);
+                              window.scrollTo({ top: 350, behavior: "smooth" });
+                            }
+                          }}
+                          disabled={currentPage === totalPages}
+                          className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 active:bg-slate-100 disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors cursor-pointer"
+                          title="Siguiente Página"
+                        >
+                          <ChevronRight size={16} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 )}
 
                 {/* Ambient Shop Sneak Peek / Showroom Section at Bottom */}
