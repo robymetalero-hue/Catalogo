@@ -648,17 +648,21 @@ export default function App() {
     setAuthError(null);
     try {
       const result = await signInWithPopup(auth, provider);
-      const email = result.user.email;
-      if (email !== "robymetalero@gmail.com") {
+      const email = result.user.email?.toLowerCase() || "";
+      const allowedEmailsStr = (import.meta as any).env.VITE_ALLOWED_ADMIN_EMAILS || "robymetalero@gmail.com";
+      const allowedEmails = allowedEmailsStr.split(",").map((e: string) => e.trim().toLowerCase());
+      
+      if (!allowedEmails.includes(email)) {
         setAuthError(`Acceso Restringido: El email '${email}' no figura como administrador oficial del catálogo.`);
         try {
           await signOut(auth);
         } catch (signOutErr) {}
       } else {
+        const defaultName = email === "robymetalero@gmail.com" ? "Ing. Roby (Google)" : "Administrador (Google)";
         const loggedUser: AdminUser = {
           uid: result.user.uid,
           email: result.user.email,
-          displayName: result.user.displayName || "Ing. Roby (Google)",
+          displayName: result.user.displayName || defaultName,
           photoURL: result.user.photoURL,
           isAdmin: true,
           role: "Administrador"
@@ -670,8 +674,19 @@ export default function App() {
         setShareToast(`¡Sesión iniciada con Google! Bienvenido, ${loggedUser.displayName}.`);
         setTimeout(() => setShareToast(null), 4000);
       }
-    } catch (error) {
-      setAuthError("Error de autenticación Google: " + (error as Error).message);
+    } catch (error: any) {
+      console.error("Google Sign-In Error:", error);
+      let errorMsg = error?.message || String(error);
+      if (error?.code === "auth/popup-blocked") {
+        errorMsg = "El navegador bloqueó la ventana emergente. Por favor, permite ventanas emergentes o abre la app en una pestaña nueva (arriba a la derecha).";
+      } else if (error?.code === "auth/unauthorized-domain") {
+        errorMsg = "Dominio no autorizado en Firebase. Debes registrar este dominio en la sección de Dominios Autorizados de Firebase Console > Authentication.";
+      } else if (error?.code === "auth/operation-not-allowed") {
+        errorMsg = "Google Sign-In no está activado en tu Firebase Console. Habilítalo gratis en 'Authentication > Sign-in method'.";
+      } else if (error?.code === "auth/internal-error" || errorMsg.includes("storage-unsupported") || errorMsg.includes("iframe")) {
+        errorMsg = "Restricción de Iframe: Los navegadores bloquean el inicio de sesión emergente dentro de este chat. Por favor, abre la tienda en una pestaña nueva (enlace arriba) para ingresar con Google.";
+      }
+      setAuthError(`Error Google: ${errorMsg}`);
     }
   };
 
