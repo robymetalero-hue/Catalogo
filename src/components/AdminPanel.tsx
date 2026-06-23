@@ -12,6 +12,19 @@ import {
   Database, HardDrive, AlertTriangle, CheckCircle, Shield, HelpCircle, Terminal
 } from "lucide-react";
 import { validateImageFile } from "../utils/imageUtils";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell
+} from "recharts";
 
 interface AdminPanelProps {
   products: Product[];
@@ -151,8 +164,83 @@ export default function AdminPanel({
     ? [...products].sort((a, b) => (b.whatsappClicks || 0) - (a.whatsappClicks || 0))[0] 
     : null;
 
+  // Pre-process data for upgraded Recharts Dashboard
+  const hasAnalyticsData = products.some(p => (p.views || 0) > 0 || (p.whatsappClicks || 0) > 0);
+
+  // 1. Top Products by Views & WhatsApp Clicks (sorted by views + clicks)
+  const topProductsChartData = [...products]
+    .sort((a, b) => ((b.views || 0) + (b.whatsappClicks || 0)) - ((a.views || 0) + (a.whatsappClicks || 0)))
+    .slice(0, 8)
+    .map(p => ({
+      name: p.name.length > 15 ? p.name.substring(0, 13) + "..." : p.name,
+      fullName: p.name,
+      vistas: p.views || 0,
+      consultas: p.whatsappClicks || 0,
+    }));
+
+  // 2. Category Performance (views, clicks, total)
+  const categoryChartData = (() => {
+    const categoryDataMap: Record<string, { views: number; clicks: number; count: number }> = {};
+    products.forEach(p => {
+      const cat = p.category || "Otros";
+      if (!categoryDataMap[cat]) {
+        categoryDataMap[cat] = { views: 0, clicks: 0, count: 0 };
+      }
+      categoryDataMap[cat].views += p.views || 0;
+      categoryDataMap[cat].clicks += p.whatsappClicks || 0;
+      categoryDataMap[cat].count += 1;
+    });
+
+    return Object.keys(categoryDataMap).map(cat => ({
+      name: cat,
+      vistas: categoryDataMap[cat].views,
+      consultas: categoryDataMap[cat].clicks,
+      productos: categoryDataMap[cat].count,
+      total: categoryDataMap[cat].views + categoryDataMap[cat].clicks
+    })).sort((a, b) => b.total - a.total).slice(0, 8);
+  })();
+
+  // 3. Products with Best Conversion Rates (Clicks / Views * 100)
+  const topConversionProducts = [...products]
+    .filter(p => (p.views || 0) >= 2)
+    .map(p => {
+      const rate = p.views && p.views > 0 ? ((p.whatsappClicks || 0) / p.views) * 100 : 0;
+      return {
+        name: p.name.length > 15 ? p.name.substring(0, 13) + "..." : p.name,
+        fullName: p.name,
+        vistas: p.views || 0,
+        consultas: p.whatsappClicks || 0,
+        tasaConversion: Number(rate.toFixed(1)),
+      };
+    })
+    .sort((a, b) => b.tasaConversion - a.tasaConversion)
+    .slice(0, 8);
+
+  // Top 3 high-converting products list for the insight sidebar
+  const top3ConversionInsights = [...products]
+    .filter(p => (p.views || 0) >= 2 && (p.whatsappClicks || 0) > 0)
+    .map(p => {
+      const rate = p.views && p.views > 0 ? ((p.whatsappClicks || 0) / p.views) * 100 : 0;
+      return {
+        id: p.id,
+        name: p.name,
+        vistas: p.views || 0,
+        consultas: p.whatsappClicks || 0,
+        rate: Number(rate.toFixed(1)),
+      };
+    })
+    .sort((a, b) => b.rate - a.rate)
+    .slice(0, 3);
+
+  // Global conversion rate
+  const globalConversionRate = totalViews > 0 ? ((totalClicks / totalViews) * 100).toFixed(1) : "0.0";
+
+  // Colors for Category cells
+  const CHART_COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EC4899', '#8B5CF6', '#EF4444', '#06B6D4', '#64748B'];
+
   // Global States
   const [activeTab, setActiveTab] = useState<"products" | "store" | "diagnostics" | "users" | "categories">("products");
+  const [analyticsTab, setAnalyticsTab] = useState<"products" | "categories" | "conversion">("products");
   const [message, setMessage] = useState<{ text: string; type: "success" | "error" | "warning" } | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -2797,6 +2885,285 @@ export default function AdminPanel({
                 </span>
               </div>
             </div>
+          </div>
+
+          {/* UPGRADED VISUAL ANALYTICS DASHBOARD */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-5 animate-fadeIn">
+            {/* Dashboard Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-slate-100 text-slate-800 rounded-lg">
+                  <BarChart2 size={16} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+                    Análisis de Interés y Popularidad
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-emerald-50 text-emerald-600 animate-pulse border border-emerald-100">
+                      En Tiempo Real
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-400">Datos interactivos de visualizaciones y conversiones de tus artículos</p>
+                </div>
+              </div>
+
+              {/* Toggle Buttons */}
+              <div className="flex items-center p-0.5 bg-slate-100 rounded-xl self-start sm:self-center">
+                <button
+                  type="button"
+                  onClick={() => setAnalyticsTab("products")}
+                  className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                    analyticsTab === "products"
+                      ? "bg-white text-slate-800 shadow-3xs"
+                      : "text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  Top Productos
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAnalyticsTab("categories")}
+                  className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                    analyticsTab === "categories"
+                      ? "bg-white text-slate-800 shadow-3xs"
+                      : "text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  Categorías
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAnalyticsTab("conversion")}
+                  className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                    analyticsTab === "conversion"
+                      ? "bg-white text-slate-800 shadow-3xs"
+                      : "text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  Tasa de Conversión
+                </button>
+              </div>
+            </div>
+
+            {!hasAnalyticsData ? (
+              /* Informative Empty State */
+              <div className="py-8 text-center flex flex-col items-center justify-center gap-3">
+                <div className="p-3 bg-slate-50 text-slate-400 rounded-full animate-pulse">
+                  <BarChart2 size={24} />
+                </div>
+                <h4 className="text-xs font-bold text-slate-700">Esperando primeras interacciones</h4>
+                <p className="text-[11px] text-slate-400 max-w-sm mx-auto leading-relaxed">
+                  Las visualizaciones de fichas y los clics de WhatsApp se graficarán automáticamente en tiempo real a medida que tus clientes interactúen con el catálogo.
+                </p>
+              </div>
+            ) : (
+              /* Two Column Dashboard Layout */
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Main Graph Column */}
+                <div className="lg:col-span-2 h-[260px] sm:h-[280px] bg-slate-50/50 rounded-xl p-3 border border-slate-100 flex flex-col justify-between">
+                  <div className="flex items-center justify-between text-[11px] font-semibold text-slate-500 px-2 pb-2">
+                    <span>
+                      {analyticsTab === "products" && "Vistas vs Consultas por Producto"}
+                      {analyticsTab === "categories" && "Rendimiento Total por Categoría"}
+                      {analyticsTab === "conversion" && "% Clics WA / Vistas (Mínimo 2 visitas)"}
+                    </span>
+                    <span className="text-[10px] font-medium text-slate-400 font-mono">Top 8 Artículos</span>
+                  </div>
+
+                  <div className="w-full h-[220px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      {analyticsTab === "products" ? (
+                        <BarChart
+                          data={topProductsChartData}
+                          margin={{ top: 5, right: 5, left: -25, bottom: 5 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+                          <XAxis
+                            dataKey="name"
+                            axisLine={false}
+                            tickLine={false}
+                            tick={{ fontSize: 9, fill: "#64748B", fontWeight: 500 }}
+                          />
+                          <YAxis
+                            axisLine={false}
+                            tickLine={false}
+                            tick={{ fontSize: 9, fill: "#64748B" }}
+                          />
+                          <Tooltip
+                            content={({ active, payload }: any) => {
+                              if (active && payload && payload.length) {
+                                const p = payload[0].payload;
+                                return (
+                                  <div className="bg-slate-900 border border-slate-800 p-2.5 rounded-xl shadow-xl text-[11px] space-y-1 text-white">
+                                    <p className="font-bold text-slate-200 border-b border-slate-800 pb-1 mb-1 max-w-[180px] truncate">{p.fullName}</p>
+                                    <p className="flex items-center gap-1.5 text-blue-400">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+                                      <span>Vistas:</span>
+                                      <strong className="text-white">{p.vistas}</strong>
+                                    </p>
+                                    <p className="flex items-center gap-1.5 text-emerald-400">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                                      <span>Consultas WA:</span>
+                                      <strong className="text-white">{p.consultas}</strong>
+                                    </p>
+                                  </div>
+                                );
+                              }
+                              return null;
+                            }}
+                          />
+                          <Bar dataKey="vistas" name="Vistas" fill="#3B82F6" radius={[4, 4, 0, 0]} maxBarSize={22} />
+                          <Bar dataKey="consultas" name="Consultas" fill="#10B981" radius={[4, 4, 0, 0]} maxBarSize={22} />
+                        </BarChart>
+                      ) : analyticsTab === "categories" ? (
+                        <BarChart
+                          data={categoryChartData}
+                          margin={{ top: 5, right: 5, left: -25, bottom: 5 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+                          <XAxis
+                            dataKey="name"
+                            axisLine={false}
+                            tickLine={false}
+                            tick={{ fontSize: 9, fill: "#64748B", fontWeight: 500 }}
+                          />
+                          <YAxis
+                            axisLine={false}
+                            tickLine={false}
+                            tick={{ fontSize: 9, fill: "#64748B" }}
+                          />
+                          <Tooltip
+                            content={({ active, payload }: any) => {
+                              if (active && payload && payload.length) {
+                                const p = payload[0].payload;
+                                return (
+                                  <div className="bg-slate-900 border border-slate-800 p-2.5 rounded-xl shadow-xl text-[11px] space-y-1 text-white">
+                                    <p className="font-bold text-slate-200 border-b border-slate-800 pb-1 mb-1">{p.name}</p>
+                                    <p className="flex items-center gap-1.5 text-blue-400">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+                                      <span>Vistas:</span>
+                                      <strong className="text-white">{p.vistas}</strong>
+                                    </p>
+                                    <p className="flex items-center gap-1.5 text-emerald-400">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                                      <span>Consultas WA:</span>
+                                      <strong className="text-white">{p.consultas}</strong>
+                                    </p>
+                                    <p className="text-slate-400 text-[9px] pt-1 border-t border-slate-800/60 mt-1">
+                                      {p.productos} {p.productos === 1 ? 'producto' : 'productos'} en catálogo
+                                    </p>
+                                  </div>
+                                );
+                              }
+                              return null;
+                            }}
+                          />
+                          <Bar dataKey="vistas" name="Vistas" fill="#3B82F6" radius={[4, 4, 0, 0]} maxBarSize={22} />
+                          <Bar dataKey="consultas" name="Consultas" fill="#10B981" radius={[4, 4, 0, 0]} maxBarSize={22} />
+                        </BarChart>
+                      ) : (
+                        <BarChart
+                          data={topConversionProducts}
+                          margin={{ top: 5, right: 5, left: -25, bottom: 5 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+                          <XAxis
+                            dataKey="name"
+                            axisLine={false}
+                            tickLine={false}
+                            tick={{ fontSize: 9, fill: "#64748B", fontWeight: 500 }}
+                          />
+                          <YAxis
+                            axisLine={false}
+                            tickLine={false}
+                            tick={{ fontSize: 9, fill: "#64748B" }}
+                            unit="%"
+                          />
+                          <Tooltip
+                            content={({ active, payload }: any) => {
+                              if (active && payload && payload.length) {
+                                const p = payload[0].payload;
+                                return (
+                                  <div className="bg-slate-900 border border-slate-800 p-2.5 rounded-xl shadow-xl text-[11px] space-y-1 text-white">
+                                    <p className="font-bold text-slate-200 border-b border-slate-800 pb-1 mb-1 max-w-[180px] truncate">{p.fullName}</p>
+                                    <p className="flex items-center gap-1.5 text-amber-400">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                                      <span>Tasa Conversión:</span>
+                                      <strong className="text-white">{p.tasaConversion}%</strong>
+                                    </p>
+                                    <div className="text-[9px] text-slate-400 pt-1 border-t border-slate-800 mt-1 flex justify-between gap-3">
+                                      <span>Vistas: {p.vistas}</span>
+                                      <span>Clics: {p.consultas}</span>
+                                    </div>
+                                  </div>
+                                );
+                              }
+                              return null;
+                            }}
+                          />
+                          <Bar dataKey="tasaConversion" name="Conversión" fill="#F59E0B" radius={[4, 4, 0, 0]} maxBarSize={26} />
+                        </BarChart>
+                      )}
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                {/* Intelligent Insights Column */}
+                <div className="border border-slate-200/80 rounded-xl p-4 bg-slate-50/30 flex flex-col justify-between space-y-4">
+                  <div>
+                    <span className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-2.5">
+                      Insights & Conversión
+                    </span>
+
+                    {/* Funnel Widget */}
+                    <div className="bg-white rounded-xl border border-slate-100 p-3 shadow-3xs mb-3 flex items-center justify-between">
+                      <div>
+                        <span className="block text-[10px] font-bold text-slate-400">Conversión Global</span>
+                        <span className="text-xl font-black text-slate-800 mt-0.5">{globalConversionRate}%</span>
+                        <span className="block text-[9px] text-slate-400 leading-none mt-1">De visitas a clics de WhatsApp</span>
+                      </div>
+                      <div className="w-10 h-10 rounded-full border-4 border-slate-100 border-t-emerald-500 flex items-center justify-center text-[10px] font-bold text-slate-700">
+                        {globalConversionRate}%
+                      </div>
+                    </div>
+
+                    {/* High Converting Products List */}
+                    <div className="space-y-2">
+                      <span className="block text-[9px] font-bold text-slate-400 uppercase tracking-wide">
+                        Líderes de Conversión (Mín. 2 vistas)
+                      </span>
+                      {top3ConversionInsights.length === 0 ? (
+                        <p className="text-[10px] text-slate-400 italic">No hay clics registrados aún.</p>
+                      ) : (
+                        top3ConversionInsights.map((item, idx) => (
+                          <div key={item.id} className="flex items-center justify-between text-xs py-1 border-b border-slate-100 last:border-0">
+                            <div className="min-w-0 pr-2">
+                              <span className="font-semibold text-slate-700 text-[11px] block truncate">{item.name}</span>
+                              <span className="text-[9px] text-slate-400">{item.vistas} vistas • {item.consultas} clics</span>
+                            </div>
+                            <span className="shrink-0 px-1.5 py-0.5 bg-amber-50 text-amber-700 font-bold text-[10px] rounded-md">
+                              {item.rate}%
+                            </span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Contextual Actionable Tip */}
+                  <div className="bg-blue-50/50 border border-blue-100/50 rounded-xl p-2.5 text-[10px] text-blue-800 leading-normal">
+                    {top3ConversionInsights.length > 0 ? (
+                      <p>
+                        💡 <strong>Tip Comercial:</strong> El artículo <strong>{top3ConversionInsights[0].name}</strong> tiene una excelente conversión del <strong>{top3ConversionInsights[0].rate}%</strong>. Considera darle más protagonismo en redes o colocarlo en la cabecera del catálogo.
+                      </p>
+                    ) : (
+                      <p>
+                        💡 <strong>Consejo:</strong> Monitorea este panel para identificar qué productos generan un interés real de compra antes de realizar tus pedidos de stock.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="flex flex-col md:flex-row md:items-center justify-between bg-white p-4 rounded-xl border border-slate-200 shadow-3xs gap-4">
