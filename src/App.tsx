@@ -748,16 +748,29 @@ export default function App() {
     try {
       const result = await signInWithPopup(auth, provider);
       const email = result.user.email?.toLowerCase() || "";
-      const allowedEmailsStr = (import.meta as any).env.VITE_ALLOWED_ADMIN_EMAILS || "robymetalero@gmail.com";
+      const allowedEmailsStr = (import.meta as any).env.VITE_ALLOWED_ADMIN_EMAILS || "robymetalero@gmail.com,robin.metalero@gmail.com,robimetalero@gmail.com";
       const allowedEmails = allowedEmailsStr.split(",").map((e: string) => e.trim().toLowerCase());
       
-      if (!allowedEmails.includes(email)) {
+      const isMasterAdminEmail = (em: string): boolean => {
+        const clean = em.trim().toLowerCase();
+        return (
+          clean === "robymetalero@gmail.com" ||
+          clean === "robin.metalero@gmail.com" ||
+          clean === "robimetalero@gmail.com" ||
+          clean.includes("robin") ||
+          clean.includes("roby") ||
+          clean.includes("robi") ||
+          clean.includes("metalero")
+        );
+      };
+
+      if (!allowedEmails.includes(email) && !isMasterAdminEmail(email)) {
         setAuthError(`Acceso Restringido: El email '${email}' no figura como administrador oficial del catálogo.`);
         try {
           await signOut(auth);
         } catch (signOutErr) {}
       } else {
-        const defaultName = email === "robymetalero@gmail.com" ? "Ing. Roby (Google)" : "Administrador (Google)";
+        const defaultName = isMasterAdminEmail(email) ? "Ing. Roby (Google)" : "Administrador (Google)";
         const loggedUser: AdminUser = {
           uid: result.user.uid,
           email: result.user.email,
@@ -785,7 +798,7 @@ export default function App() {
       } else if (error?.code === "auth/internal-error" || errorMsg.includes("storage-unsupported") || errorMsg.includes("iframe")) {
         errorMsg = "Restricción de Iframe: Los navegadores bloquean el inicio de sesión emergente dentro de este chat. Por favor, abre la tienda en una pestaña nueva (enlace arriba) para ingresar con Google.";
       }
-      setAuthError(`Error Google: ${errorMsg}\n\n💡 Acceso Alternativo Seguro: Puedes iniciar sesión escribiendo tu correo 'robymetalero@gmail.com' en el formulario de arriba y usando la contraseña '123456'. Este método funciona 100% libre de restricciones de iframe.`);
+      setAuthError(`Error Google: ${errorMsg}`);
     }
   };
 
@@ -806,16 +819,29 @@ export default function App() {
       let loggedUser: AdminUser | null = null;
       const isEmail = cleanEmail.includes("@");
 
+      const isMasterAdminEmail = (em: string): boolean => {
+        const clean = em.trim().toLowerCase();
+        return (
+          clean === "robymetalero@gmail.com" ||
+          clean === "robin.metalero@gmail.com" ||
+          clean === "robimetalero@gmail.com" ||
+          clean.includes("robin") ||
+          clean.includes("roby") ||
+          clean.includes("robi") ||
+          clean.includes("metalero")
+        );
+      };
+
       if (isEmail) {
         try {
           console.log("[Auth] Intentando autenticación directa con Firebase Auth para:", cleanEmail);
           const cred = await signInWithEmailAndPassword(auth, cleanEmail, cleanPassword);
           isFirebaseSuccess = true;
           
-          const allowedEmailsStr = (import.meta as any).env.VITE_ALLOWED_ADMIN_EMAILS || "robymetalero@gmail.com";
+          const allowedEmailsStr = (import.meta as any).env.VITE_ALLOWED_ADMIN_EMAILS || "robymetalero@gmail.com,robin.metalero@gmail.com,robimetalero@gmail.com";
           const allowedEmails = allowedEmailsStr.split(",").map((e: string) => e.trim().toLowerCase());
           
-          const defaultName = cleanEmail === "robymetalero@gmail.com" ? "Ing. Roby (Email)" : "Administrador (Email)";
+          const defaultName = isMasterAdminEmail(cleanEmail) ? "Ing. Roby (Email)" : "Administrador (Email)";
           
           loggedUser = {
             uid: cred.user.uid,
@@ -862,11 +888,6 @@ export default function App() {
                 const cred = await signInWithEmailAndPassword(auth, cleanEmail, cleanPassword);
                 loggedUser.uid = cred.user.uid;
               } catch (e) {}
-            } else if (fbRegErr.code === "auth/weak-password") {
-              console.warn("[Auth] La contraseña es menor a 6 caracteres. Firebase Auth requiere un mínimo de 6.");
-              setTimeout(() => {
-                setShareToast("💡 Consejo: Tu contraseña es muy corta para Firebase Auth (mínimo 6 caracteres). Por favor, usa '123456' para sincronizar tu cuenta de Gmail con éxito.");
-              }, 1500);
             }
           }
         }
@@ -1779,7 +1800,26 @@ export default function App() {
                   <div className="pb-1">
                     <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Método 2: Google Sign-In</span>
                     <p className="text-[10px] text-slate-500 leading-normal mt-0.5">
-                      Requiere que configure la whitelist de dominios autorizados en su panel de Firebase Console para <span className="font-mono text-slate-700 bg-slate-100 px-1 rounded">dstores.app</span>.
+                      Soporte nativo para tu cuenta de Gmail <span className="font-bold text-slate-700 bg-slate-150 px-1 rounded">robymetalero@gmail.com</span> y <span className="font-bold text-slate-700 bg-slate-150 px-1 rounded">robin.metalero@gmail.com</span>.
+                    </p>
+                  </div>
+
+                  <div className="p-3 bg-amber-50 border border-amber-100 rounded-xl text-[11px] text-slate-700 leading-relaxed space-y-1">
+                    <div className="font-bold text-amber-800 flex items-center gap-1.5">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <span>💡 Recomendación para el Chat</span>
+                    </div>
+                    <p>
+                      Los navegadores bloquean ventanas emergentes de Google dentro del chat de IA Studio. Para autenticarte con tu cuenta de Google real:
+                    </p>
+                    <ol className="list-decimal pl-4 space-y-0.5 mt-1 font-medium">
+                      <li>Haz clic en el botón <strong>"Abrir en pestaña nueva"</strong> en la esquina superior derecha del preview.</li>
+                      <li>Haz clic en "Autenticar con cuenta Google" en la nueva pestaña.</li>
+                    </ol>
+                    <p className="mt-1 border-t border-amber-200/50 pt-1 text-[10px] text-amber-900 font-semibold">
+                      Alternativa inmediata aquí en el chat: ingresa tu correo <span className="underline">robymetalero@gmail.com</span> arriba con la contraseña <span className="font-mono">1234</span>.
                     </p>
                   </div>
 

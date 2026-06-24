@@ -7,6 +7,7 @@ import React, { useState } from "react";
 import { Product } from "../types";
 import { ChevronLeft, ChevronRight, Image as ImageIcon, Video, Phone, Tag } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import LazyImage from "./LazyImage";
 
 interface ProductCardProps {
   product: Product;
@@ -28,35 +29,12 @@ const ProductCard: React.FC<ProductCardProps> = ({
   index = 0,
 }) => {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
-  const [imageLoading, setImageLoading] = useState(true);
-  const imgRef = React.useRef<HTMLImageElement>(null);
 
   const images = product.images && product.images.filter(img => img && img.trim() !== "").length > 0
     ? product.images.filter(img => img && img.trim() !== "")
     : ["https://images.unsplash.com/photo-1544816155-12df9643f363?q=80&w=600&auto=format&fit=crop"]; // beautiful default product placeholder
 
   const currentImageUrl = images[currentImageIndex];
-
-  const [imageSrc, setImageSrc] = React.useState(currentImageUrl || "");
-
-  React.useEffect(() => {
-    setImageSrc(currentImageUrl || "");
-    if (imgRef.current && imgRef.current.complete) {
-      setImageLoading(false);
-    } else {
-      setImageLoading(true);
-    }
-  }, [currentImageUrl]);
-
-  const handleImageError = () => {
-    setImageLoading(false);
-    const backupImg = product.backupImages?.[currentImageIndex];
-    if (backupImg && imageSrc !== backupImg) {
-      setImageSrc(backupImg);
-    } else {
-      setImageSrc("https://images.unsplash.com/photo-1542291026-7eec264c27ff?q=80&w=600&auto=format&fit=crop");
-    }
-  };
 
   const handleNextImage = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -105,27 +83,13 @@ const ProductCard: React.FC<ProductCardProps> = ({
     >
       {/* Image Gallery Container */}
       <div className="relative aspect-square w-full bg-slate-50/50 overflow-hidden border-b border-slate-100">
-        {/* Skeleton Shimmer Overlay */}
-        {imageLoading && (
-          <div className="absolute inset-0 bg-slate-100 flex items-center justify-center z-10 transition-opacity duration-300">
-            <ImageIcon size={16} className="text-slate-300 animate-pulse" />
-          </div>
-        )}
-
         <AnimatePresence mode="wait">
-          <motion.img
+          <LazyImage
             key={currentImageIndex}
-            ref={imgRef}
-            src={imageSrc}
+            src={currentImageUrl}
             alt={product.name}
             referrerPolicy="no-referrer"
-            loading="lazy"
-            onLoad={() => setImageLoading(false)}
-            onError={handleImageError}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: imageLoading ? 0 : 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.4, ease: "easeInOut" }}
+            fallbackSrc={product.backupImages?.[currentImageIndex] || "https://images.unsplash.com/photo-1542291026-7eec264c27ff?q=80&w=600&auto=format&fit=crop"}
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-705 ease-[0.16,1,0.3,1] absolute inset-0 font-sans"
           />
         </AnimatePresence>

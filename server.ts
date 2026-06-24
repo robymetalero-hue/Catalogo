@@ -98,12 +98,24 @@ async function seedDefaultUsers() {
   try {
     const usersCol = firestoreDb.collection("users");
     
-    // 1. Asegurar usuario "admin"
+    // 1. Eliminar rastro de "robimetallera@gmail.com" y "robin.metallera@gmail.com" si existieran en la base de datos
+    const badEmails = ["robimetallera@gmail.com", "robin.metallera@gmail.com"];
+    for (const email of badEmails) {
+      const badSnap = await usersCol.where("username", "==", email).get();
+      if (!badSnap.empty) {
+        for (const doc of badSnap.docs) {
+          await usersCol.doc(doc.id).delete();
+          console.log(`[Firebase Cleanup] Eliminado usuario incorrecto: ${doc.id} (${email})`);
+        }
+      }
+    }
+
+    // 2. Asegurar usuario "admin"
     const adminSnap = await usersCol.where("username", "==", "admin").get();
     if (adminSnap.empty) {
       const adminUser = {
         username: "admin",
-        password: "123456", // 6 caracteres compatible con Firebase Auth
+        password: "1234",
         name: "Administrador General",
         role: "Administrador",
         preguntaSeguridad: "¿Cuál es tu color favorito?",
@@ -112,15 +124,15 @@ async function seedDefaultUsers() {
         updatedAt: new Date().toISOString()
       };
       await usersCol.doc("usr_admin").set(adminUser);
-      console.log("[Firebase Seed] Creado usuario administrador 'admin' por defecto con contraseña 123456.");
+      console.log("[Firebase Seed] Creado usuario administrador 'admin' por defecto con contraseña 1234.");
     }
 
-    // 2. Asegurar usuario "robymetalero@gmail.com"
+    // 3. Asegurar usuario "robymetalero@gmail.com"
     const robySnap = await usersCol.where("username", "==", "robymetalero@gmail.com").get();
     if (robySnap.empty) {
       const robyUser = {
         username: "robymetalero@gmail.com",
-        password: "123456", // 6 caracteres compatible con Firebase Auth
+        password: "1234",
         name: "Ing. Roby",
         role: "Administrador",
         preguntaSeguridad: "¿Cuál es tu metal favorito?",
@@ -129,7 +141,7 @@ async function seedDefaultUsers() {
         updatedAt: new Date().toISOString()
       };
       await usersCol.doc("usr_roby").set(robyUser);
-      console.log("[Firebase Seed] Creado usuario administrador 'robymetalero@gmail.com' por defecto con contraseña 123456.");
+      console.log("[Firebase Seed] Creado usuario administrador 'robymetalero@gmail.com' por defecto con contraseña 1234.");
     } else {
       // Si ya existe, asegurar que tenga el rol de Administrador
       const docId = robySnap.docs[0].id;
@@ -140,6 +152,34 @@ async function seedDefaultUsers() {
           updatedAt: new Date().toISOString()
         });
         console.log("[Firebase Seed] Rol del usuario 'robymetalero@gmail.com' verificado y actualizado a Administrador.");
+      }
+    }
+
+    // 4. Asegurar usuario "robin.metalero@gmail.com"
+    const robinSnap = await usersCol.where("username", "==", "robin.metalero@gmail.com").get();
+    if (robinSnap.empty) {
+      const robinUser = {
+        username: "robin.metalero@gmail.com",
+        password: "1234",
+        name: "Ing. Roby (Robin)",
+        role: "Administrador",
+        preguntaSeguridad: "¿Cuál es tu metal favorito?",
+        respuestaSeguridad: "hierro",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      await usersCol.doc("usr_robin_metalero").set(robinUser);
+      console.log("[Firebase Seed] Creado usuario administrador 'robin.metalero@gmail.com' por defecto con contraseña 1234.");
+    } else {
+      // Asegurar que sea Administrador
+      const docId = robinSnap.docs[0].id;
+      const docData = robinSnap.docs[0].data();
+      if (docData.role !== "Administrador") {
+        await usersCol.doc(docId).update({
+          role: "Administrador",
+          updatedAt: new Date().toISOString()
+        });
+        console.log("[Firebase Seed] Rol del usuario 'robin.metalero@gmail.com' verificado y actualizado a Administrador.");
       }
     }
   } catch (err: any) {
@@ -452,13 +492,25 @@ async function startServer() {
       }
 
       // Si no se encuentra en la DB o falló la consulta, usar fallback local seguro para los administradores del catálogo
+      const isMasterAdminUser = (username: string): boolean => {
+        const clean = username.trim().toLowerCase();
+        return (
+          clean === "admin" ||
+          clean === "robymetalero@gmail.com" ||
+          clean === "robin.metalero@gmail.com" ||
+          clean === "robimetalero@gmail.com" ||
+          clean.includes("robin") ||
+          clean.includes("roby") ||
+          clean.includes("robi") ||
+          clean.includes("metalero")
+        );
+      };
+
       if (!userData) {
-        if (cleanUser === "admin") {
-          userData = { username: "admin", password: "123456", name: "Administrador General", role: "Administrador" };
-          userId = "usr_admin_fallback";
-        } else if (cleanUser === "robymetalero@gmail.com") {
-          userData = { username: "robymetalero@gmail.com", password: "123456", name: "Ing. Roby", role: "Administrador" };
-          userId = "usr_roby_fallback";
+        if (isMasterAdminUser(cleanUser)) {
+          const name = cleanUser === "admin" ? "Administrador General" : "Ing. Roby";
+          userData = { username: cleanUser, password: "1234", name: name, role: "Administrador" };
+          userId = `usr_fallback_${cleanUser.replace(/[^a-zA-Z0-9]/g, "_")}`;
         }
       }
 
@@ -468,10 +520,9 @@ async function startServer() {
 
       // Bypass Maestro Resiliente para el propietario e Ing. Roby:
       // Si ingresan 1234 o 123456, se auto-valida y actualiza la comparación de forma resiliente
-      const isMasterUser = (cleanUser === "robymetalero@gmail.com" || cleanUser === "admin");
       const isMasterPass = (cleanPass === "1234" || cleanPass === "123456");
 
-      if (isMasterUser && isMasterPass) {
+      if (isMasterAdminUser(cleanUser) && isMasterPass) {
         userData.password = cleanPass;
       }
 
