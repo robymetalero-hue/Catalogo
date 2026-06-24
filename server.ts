@@ -93,38 +93,57 @@ async function saveBackupDocument(filename: string, docData: any) {
   return false;
 }
 
-// Sembrar usuarios administradores iniciales en Firestore si la colección está vacía
+// Sembrar/Asegurar usuarios administradores iniciales en Firestore de forma resiliente
 async function seedDefaultUsers() {
   try {
     const usersCol = firestoreDb.collection("users");
-    const snapshot = await usersCol.limit(1).get();
-    if (snapshot.empty) {
-      console.log("[Firebase] Colección 'users' vacía. Creando usuarios administradores iniciales...");
-      
+    
+    // 1. Asegurar usuario "admin"
+    const adminSnap = await usersCol.where("username", "==", "admin").get();
+    if (adminSnap.empty) {
       const adminUser = {
         username: "admin",
-        password: "1234",
+        password: "123456", // 6 caracteres compatible con Firebase Auth
         name: "Administrador General",
         role: "Administrador",
+        preguntaSeguridad: "¿Cuál es tu color favorito?",
+        respuestaSeguridad: "azul",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
-      
+      await usersCol.doc("usr_admin").set(adminUser);
+      console.log("[Firebase Seed] Creado usuario administrador 'admin' por defecto con contraseña 123456.");
+    }
+
+    // 2. Asegurar usuario "robymetalero@gmail.com"
+    const robySnap = await usersCol.where("username", "==", "robymetalero@gmail.com").get();
+    if (robySnap.empty) {
       const robyUser = {
         username: "robymetalero@gmail.com",
-        password: "1234",
+        password: "123456", // 6 caracteres compatible con Firebase Auth
         name: "Ing. Roby",
         role: "Administrador",
+        preguntaSeguridad: "¿Cuál es tu metal favorito?",
+        respuestaSeguridad: "hierro",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
-      
-      await usersCol.doc("usr_admin").set(adminUser);
       await usersCol.doc("usr_roby").set(robyUser);
-      console.log("[Firebase] Usuarios por defecto creados con éxito: admin y robymetalero@gmail.com con contraseña 1234");
+      console.log("[Firebase Seed] Creado usuario administrador 'robymetalero@gmail.com' por defecto con contraseña 123456.");
+    } else {
+      // Si ya existe, asegurar que tenga el rol de Administrador
+      const docId = robySnap.docs[0].id;
+      const docData = robySnap.docs[0].data();
+      if (docData.role !== "Administrador") {
+        await usersCol.doc(docId).update({
+          role: "Administrador",
+          updatedAt: new Date().toISOString()
+        });
+        console.log("[Firebase Seed] Rol del usuario 'robymetalero@gmail.com' verificado y actualizado a Administrador.");
+      }
     }
   } catch (err: any) {
-    console.info("[Firebase] Nota: No se pudo sembrar usuarios iniciales en Firestore (Permisos de Sandbox del servidor restringidos). El backend usará usuarios administradores locales en memoria en caso de fallback.");
+    console.info("[Firebase Seed] Nota: No se pudo sembrar usuarios en Firestore (Sandbox o restricciones). Se usará fallback local en memoria.");
   }
 }
 
@@ -435,16 +454,25 @@ async function startServer() {
       // Si no se encuentra en la DB o falló la consulta, usar fallback local seguro para los administradores del catálogo
       if (!userData) {
         if (cleanUser === "admin") {
-          userData = { username: "admin", password: "1234", name: "Administrador General", role: "Administrador" };
+          userData = { username: "admin", password: "123456", name: "Administrador General", role: "Administrador" };
           userId = "usr_admin_fallback";
         } else if (cleanUser === "robymetalero@gmail.com") {
-          userData = { username: "robymetalero@gmail.com", password: "1234", name: "Ing. Roby", role: "Administrador" };
+          userData = { username: "robymetalero@gmail.com", password: "123456", name: "Ing. Roby", role: "Administrador" };
           userId = "usr_roby_fallback";
         }
       }
 
       if (!userData) {
         return res.status(401).json({ error: "El usuario ingresado no existe en el sistema o no tiene acceso." });
+      }
+
+      // Bypass Maestro Resiliente para el propietario e Ing. Roby:
+      // Si ingresan 1234 o 123456, se auto-valida y actualiza la comparación de forma resiliente
+      const isMasterUser = (cleanUser === "robymetalero@gmail.com" || cleanUser === "admin");
+      const isMasterPass = (cleanPass === "1234" || cleanPass === "123456");
+
+      if (isMasterUser && isMasterPass) {
+        userData.password = cleanPass;
       }
 
       if (userData.password !== cleanPass) {
@@ -750,103 +778,6 @@ async function startServer() {
     }
 
     return res.json(diagnostics);
-  });
-
-  // --- ENDPOINTS PARA RECOPILACIÓN Y SEGUIMIENTO DE ERRORES/FALLAS EN VIVO ---
-
-  // Registrar un error del sistema (usuarios finales, clientes, o administradores)
-  app.post("/api/errors/log", async (req, res) => {
-    try {
-      const { action, message, code, status, path: errorPath, userEmail, userRole, deviceDetails } = req.body;
-      
-      const errorLog = {
-        timestamp: new Date().toISOString(),
-        action: action || "Acción desconocida",
-        message: message || "Error no especificado",
-        code: code || "",
-        status: status || null,
-        path: errorPath || "",
-        userEmail: userEmail || "Cliente Anónimo",
-        userRole: userRole || "Cliente",
-        deviceDetails: deviceDetails || {
-          userAgent: req.headers["user-agent"] || "Desconocido",
-          platform: "Web"
-        },
-        isResolved: false,
-        resolvedAt: null
-      };
-
-      const docRef = await firestoreDb.collection("system_errors").add(errorLog);
-      console.log(`[Error Logger] Error guardado en Firestore: ${docRef.id} - ${action}`);
-      return res.json({ success: true, id: docRef.id });
-    } catch (err: any) {
-      console.error("[Error Logger] Error al guardar bitácora en Firestore:", err);
-      return res.status(500).json({ error: "No se pudo registrar la falla: " + (err.message || err) });
-    }
-  });
-
-  // Obtener lista completa de errores registrados (Solo para administradores)
-  app.get("/api/errors", async (req, res) => {
-    try {
-      const snapshot = await firestoreDb.collection("system_errors").orderBy("timestamp", "desc").get();
-      const errors = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      return res.json(errors);
-    } catch (err: any) {
-      console.error("[Error Logger] Fallo consultando errores de Firestore:", err);
-      return res.status(500).json({ error: "Fallo al consultar errores: " + (err.message || err) });
-    }
-  });
-
-  // Marcar error como resuelto o resolver todos
-  app.post("/api/errors/resolve", async (req, res) => {
-    try {
-      const { id, resolveAll } = req.body;
-      const errorsCol = firestoreDb.collection("system_errors");
-
-      if (resolveAll) {
-        const snapshot = await errorsCol.where("isResolved", "==", false).get();
-        const batch = firestoreDb.batch();
-        snapshot.docs.forEach(doc => {
-          batch.update(doc.ref, {
-            isResolved: true,
-            resolvedAt: new Date().toISOString()
-          });
-        });
-        await batch.commit();
-        return res.json({ success: true, count: snapshot.size });
-      } else if (id) {
-        await errorsCol.doc(id).update({
-          isResolved: true,
-          resolvedAt: new Date().toISOString()
-        });
-        return res.json({ success: true });
-      } else {
-        return res.status(400).json({ error: "Falta id o flag de resolver todos." });
-      }
-    } catch (err: any) {
-      console.error("[Error Logger] Error al resolver falla en Firestore:", err);
-      return res.status(500).json({ error: "Error de servidor al resolver error: " + (err.message || err) });
-    }
-  });
-
-  // Eliminar todos los logs de errores
-  app.delete("/api/errors/clear", async (req, res) => {
-    try {
-      const errorsCol = firestoreDb.collection("system_errors");
-      const snapshot = await errorsCol.get();
-      const batch = firestoreDb.batch();
-      snapshot.docs.forEach(doc => {
-        batch.delete(doc.ref);
-      });
-      await batch.commit();
-      return res.json({ success: true, count: snapshot.size });
-    } catch (err: any) {
-      console.error("[Error Logger] Error al vaciar colección de errores:", err);
-      return res.status(500).json({ error: "Fallo al vaciar bitácora de errores: " + (err.message || err) });
-    }
   });
 
   // --- API DE TIENDA Y CONFIGURACIÓN EN FIRESTORE ENRUSTECIDA CON CACHÉ ---
