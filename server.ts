@@ -752,6 +752,103 @@ async function startServer() {
     return res.json(diagnostics);
   });
 
+  // --- ENDPOINTS PARA RECOPILACIÓN Y SEGUIMIENTO DE ERRORES/FALLAS EN VIVO ---
+
+  // Registrar un error del sistema (usuarios finales, clientes, o administradores)
+  app.post("/api/errors/log", async (req, res) => {
+    try {
+      const { action, message, code, status, path: errorPath, userEmail, userRole, deviceDetails } = req.body;
+      
+      const errorLog = {
+        timestamp: new Date().toISOString(),
+        action: action || "Acción desconocida",
+        message: message || "Error no especificado",
+        code: code || "",
+        status: status || null,
+        path: errorPath || "",
+        userEmail: userEmail || "Cliente Anónimo",
+        userRole: userRole || "Cliente",
+        deviceDetails: deviceDetails || {
+          userAgent: req.headers["user-agent"] || "Desconocido",
+          platform: "Web"
+        },
+        isResolved: false,
+        resolvedAt: null
+      };
+
+      const docRef = await firestoreDb.collection("system_errors").add(errorLog);
+      console.log(`[Error Logger] Error guardado en Firestore: ${docRef.id} - ${action}`);
+      return res.json({ success: true, id: docRef.id });
+    } catch (err: any) {
+      console.error("[Error Logger] Error al guardar bitácora en Firestore:", err);
+      return res.status(500).json({ error: "No se pudo registrar la falla: " + (err.message || err) });
+    }
+  });
+
+  // Obtener lista completa de errores registrados (Solo para administradores)
+  app.get("/api/errors", async (req, res) => {
+    try {
+      const snapshot = await firestoreDb.collection("system_errors").orderBy("timestamp", "desc").get();
+      const errors = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      return res.json(errors);
+    } catch (err: any) {
+      console.error("[Error Logger] Fallo consultando errores de Firestore:", err);
+      return res.status(500).json({ error: "Fallo al consultar errores: " + (err.message || err) });
+    }
+  });
+
+  // Marcar error como resuelto o resolver todos
+  app.post("/api/errors/resolve", async (req, res) => {
+    try {
+      const { id, resolveAll } = req.body;
+      const errorsCol = firestoreDb.collection("system_errors");
+
+      if (resolveAll) {
+        const snapshot = await errorsCol.where("isResolved", "==", false).get();
+        const batch = firestoreDb.batch();
+        snapshot.docs.forEach(doc => {
+          batch.update(doc.ref, {
+            isResolved: true,
+            resolvedAt: new Date().toISOString()
+          });
+        });
+        await batch.commit();
+        return res.json({ success: true, count: snapshot.size });
+      } else if (id) {
+        await errorsCol.doc(id).update({
+          isResolved: true,
+          resolvedAt: new Date().toISOString()
+        });
+        return res.json({ success: true });
+      } else {
+        return res.status(400).json({ error: "Falta id o flag de resolver todos." });
+      }
+    } catch (err: any) {
+      console.error("[Error Logger] Error al resolver falla en Firestore:", err);
+      return res.status(500).json({ error: "Error de servidor al resolver error: " + (err.message || err) });
+    }
+  });
+
+  // Eliminar todos los logs de errores
+  app.delete("/api/errors/clear", async (req, res) => {
+    try {
+      const errorsCol = firestoreDb.collection("system_errors");
+      const snapshot = await errorsCol.get();
+      const batch = firestoreDb.batch();
+      snapshot.docs.forEach(doc => {
+        batch.delete(doc.ref);
+      });
+      await batch.commit();
+      return res.json({ success: true, count: snapshot.size });
+    } catch (err: any) {
+      console.error("[Error Logger] Error al vaciar colección de errores:", err);
+      return res.status(500).json({ error: "Fallo al vaciar bitácora de errores: " + (err.message || err) });
+    }
+  });
+
   // --- API DE TIENDA Y CONFIGURACIÓN EN FIRESTORE ENRUSTECIDA CON CACHÉ ---
   
   // Obtener configuración de la tienda

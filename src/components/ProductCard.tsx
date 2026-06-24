@@ -98,10 +98,10 @@ const ProductCard: React.FC<ProductCardProps> = ({
       id={`product-card-${product.id}`}
       className="group flex flex-col h-full bg-white rounded-2xl sm:rounded-3xl border border-slate-200/60 hover:border-amber-500/60 shadow-xs hover:shadow-xl hover:shadow-slate-900/5 overflow-hidden cursor-pointer relative select-none transition-all duration-500 hover:-translate-y-1.5 hover:scale-102"
       onClick={() => onOpenDetails(product)}
-      initial={{ opacity: 0, y: 24 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-20px" }}
-      transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1], delay: index * 0.04 }}
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.96, transition: { duration: 0.2 } }}
+      transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1], delay: index * 0.03 }}
     >
       {/* Image Gallery Container */}
       <div className="relative aspect-square w-full bg-slate-50/50 overflow-hidden border-b border-slate-100">

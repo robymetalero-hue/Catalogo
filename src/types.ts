@@ -16,6 +16,7 @@ export interface StoreConfig {
   bannerStyle?: "classic" | "compact"; // Slogan banner styling style
   promoBannerText?: string;  // Upper marquee promotion slider text
   storeImages?: string[]; // Multiple photos of the store itself
+  errorNotificationEmail?: string; // Designated email address for error alerts and notifications
   updatedAt?: any; // Firestore Timestamp or Date ISO string
 }
 

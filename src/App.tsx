@@ -148,6 +148,99 @@ export default function App() {
   const [loadingApp, setLoadingApp] = useState(false);
   const [isUsingCache, setIsUsingCache] = useState(false);
 
+  // Sistema de Reporte Automatizado de Errores y Fallas en la Nube
+  const reportSystemError = async (action: string, error: any) => {
+    try {
+      const errMsg = error?.message || String(error);
+      const errCode = error?.code || "";
+      const status = error?.status || null;
+      const path = window.location.pathname + window.location.search;
+      
+      const payload = {
+        action,
+        message: errMsg,
+        code: errCode,
+        status,
+        path,
+        userEmail: user?.email || user?.username || "Cliente Anónimo",
+        userRole: user?.role || "Cliente",
+        deviceDetails: {
+          userAgent: navigator.userAgent,
+          platform: navigator.platform,
+          screenSize: `${window.innerWidth}x${window.innerHeight}`
+        }
+      };
+
+      await fetch("/api/errors/log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+    } catch (err) {
+      console.error("[Error Logger] No se pudo reportar el error:", err);
+    }
+  };
+
+  // Escuchar errores de runtime globales en los navegadores de clientes o administradores
+  useEffect(() => {
+    const handleGlobalError = (event: ErrorEvent) => {
+      if (event.filename && event.filename.includes("errors/log")) return;
+      reportSystemError("Error de Runtime (Lado Cliente)", event.error || event.message);
+    };
+
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason;
+      const msg = reason?.message || String(reason);
+      if (msg.includes("errors/log") || msg.includes("api/errors/log")) return;
+      reportSystemError("Promesa Rechazada (Cliente)", reason);
+    };
+
+    window.addEventListener("error", handleGlobalError);
+    window.addEventListener("unhandledrejection", handleUnhandledRejection);
+
+    return () => {
+      window.removeEventListener("error", handleGlobalError);
+      window.removeEventListener("unhandledrejection", handleUnhandledRejection);
+    };
+  }, [user]);
+
+  // Escuchar errores en tiempo real en la nube para notificar al Administrador de inmediato
+  useEffect(() => {
+    if (!user || user.role !== "Administrador") return;
+
+    const startSessionTime = new Date().getTime();
+    const qErrors = query(collection(db, "system_errors"), orderBy("timestamp", "desc"));
+    
+    const unsubErrors = onSnapshot(qErrors, (snapshot) => {
+      snapshot.docChanges().forEach((change) => {
+        if (change.type === "added") {
+          const errData = change.doc.data();
+          const errTime = errData.timestamp ? new Date(errData.timestamp).getTime() : 0;
+          if (errTime > startSessionTime && !errData.isResolved) {
+            setShareToast(`🚨 ¡Alerta de Falla en Vivo! [${errData.userRole || "Usuario"}] experimentó un fallo en "${errData.action || "Acción"}": "${(errData.message || "").substring(0, 50)}..."`);
+            try {
+              const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+              const oscillator = audioCtx.createOscillator();
+              const gainNode = audioCtx.createGain();
+              oscillator.connect(gainNode);
+              gainNode.connect(audioCtx.destination);
+              oscillator.type = "sine";
+              oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+              oscillator.frequency.setValueAtTime(880, audioCtx.currentTime + 0.1);
+              gainNode.gain.setValueAtTime(0.05, audioCtx.currentTime);
+              oscillator.start();
+              oscillator.stop(audioCtx.currentTime + 0.25);
+            } catch (e) {}
+          }
+        }
+      });
+    }, (err) => {
+      console.warn("[Firestore Listener] No se pudo conectar el monitor de errores en vivo:", err);
+    });
+
+    return () => unsubErrors();
+  }, [user]);
+
   // Safety fallback for hidden location tab
   useEffect(() => {
     if (storeConfig.showLocation === false && !user && activeViewTab === "location") {
@@ -402,6 +495,9 @@ export default function App() {
       }
     }, (err) => {
       console.warn("[Firestore Listener] Error en listener de productos:", err);
+      if (localStorage.getItem("admin_session")) {
+        setAuthError(`Error de sincronización de productos: ${err.message || err}`);
+      }
     });
 
     // 2. Listen to storeConfig updates
@@ -447,6 +543,9 @@ export default function App() {
       setShowUpdatePrompt(true);
     }, (err) => {
       console.warn("[Firestore Listener] Error en listener de configuración:", err);
+      if (localStorage.getItem("admin_session")) {
+        setAuthError(`Error de sincronización de configuración: ${err.message || err}`);
+      }
     });
 
     return () => {
@@ -703,34 +802,84 @@ export default function App() {
 
     setLoadingApp(true);
     try {
-      const response = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ username: cleanEmail, password: cleanPassword })
-      });
+      let isFirebaseSuccess = false;
+      let loggedUser: AdminUser | null = null;
+      const isEmail = cleanEmail.includes("@");
 
-      if (!response.ok) {
-        const errData = await response.json();
-        setLocalLoginError(errData.error || "Usuario o contraseña incorrectos.");
-        setLoadingApp(false);
-        return;
+      if (isEmail) {
+        try {
+          console.log("[Auth] Intentando autenticación directa con Firebase Auth para:", cleanEmail);
+          const cred = await signInWithEmailAndPassword(auth, cleanEmail, cleanPassword);
+          isFirebaseSuccess = true;
+          
+          const allowedEmailsStr = (import.meta as any).env.VITE_ALLOWED_ADMIN_EMAILS || "robymetalero@gmail.com";
+          const allowedEmails = allowedEmailsStr.split(",").map((e: string) => e.trim().toLowerCase());
+          
+          const defaultName = cleanEmail === "robymetalero@gmail.com" ? "Ing. Roby (Email)" : "Administrador (Email)";
+          
+          loggedUser = {
+            uid: cred.user.uid,
+            email: cred.user.email,
+            displayName: cred.user.displayName || defaultName,
+            photoURL: cred.user.photoURL,
+            isAdmin: true,
+            role: "Administrador"
+          };
+          console.log("[Auth] Autenticación con Firebase Auth exitosa para:", cleanEmail);
+        } catch (fbErr: any) {
+          console.warn("[Auth] Autenticación directa falló, procediendo con verificación de base de datos:", fbErr.code || fbErr.message);
+        }
       }
 
-      const loggedUser: AdminUser = await response.json();
+      if (!isFirebaseSuccess) {
+        const response = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ username: cleanEmail, password: cleanPassword })
+        });
 
-      setUser(loggedUser);
-      localStorage.setItem("admin_session", JSON.stringify(loggedUser));
-      setShowAdminPanel(true);
-      setShowLoginModal(false);
-      setLoginPassword("");
-      
-      setShareToast(`¡Sesión iniciada con éxito! Bienvenido, ${loggedUser.displayName}.`);
-      setTimeout(() => setShareToast(null), 4000);
+        if (!response.ok) {
+          const errData = await response.json();
+          setLocalLoginError(errData.error || "Usuario o contraseña incorrectos.");
+          setLoadingApp(false);
+          return;
+        }
+
+        loggedUser = await response.json();
+
+        if (isEmail && loggedUser) {
+          try {
+            console.log("[Auth] Intentando registrar/sincronizar correo en Firebase Auth...");
+            const createResult = await createUserWithEmailAndPassword(auth, cleanEmail, cleanPassword);
+            console.log("[Auth] Sincronización en Firebase Auth exitosa para:", cleanEmail);
+            loggedUser.uid = createResult.user.uid;
+          } catch (fbRegErr: any) {
+            console.info("[Auth] Sincronización pasiva (usuario ya registrado en Firebase Auth o método de contraseña deshabilitado):", fbRegErr.code || fbRegErr.message);
+            if (fbRegErr.code === "auth/email-already-in-use") {
+              try {
+                const cred = await signInWithEmailAndPassword(auth, cleanEmail, cleanPassword);
+                loggedUser.uid = cred.user.uid;
+              } catch (e) {}
+            }
+          }
+        }
+      }
+
+      if (loggedUser) {
+        setUser(loggedUser);
+        localStorage.setItem("admin_session", JSON.stringify(loggedUser));
+        setShowAdminPanel(true);
+        setShowLoginModal(false);
+        setLoginPassword("");
+        
+        setShareToast(`¡Sesión iniciada con éxito! Bienvenido, ${loggedUser.displayName}.`);
+        setTimeout(() => setShareToast(null), 4000);
+      }
     } catch (err: any) {
       console.error("General login process error:", err);
-      setLocalLoginError("Fallo al iniciar sesión en el servidor: " + err.message);
+      setLocalLoginError("Fallo al iniciar sesión: " + err.message);
     } finally {
       setLoadingApp(false);
     }
@@ -947,12 +1096,12 @@ export default function App() {
         </div>
       )}
 
-      {/* Access alert warnings */}
-      {authError && (
+      {/* Access alert warnings - Only visible to administrators */}
+      {authError && user?.isAdmin && (
         <div className="bg-rose-950 border-b border-rose-900 text-rose-200 px-4 py-2.5 text-xs text-center flex items-center justify-center gap-2 relative">
           <AlertCircle size={14} className="shrink-0" />
-          <span>{authError} Sigue navegando de forma pasiva por los productos de la tienda.</span>
-          <button onClick={() => setAuthError(null)} className="absolute right-4 hover:opacity-80">
+          <span>[Solo Administradores] Falla detectada en el sistema: {authError}</span>
+          <button onClick={() => setAuthError(null)} className="absolute right-4 hover:opacity-80 cursor-pointer">
             <X size={14} />
           </button>
         </div>
@@ -1111,37 +1260,46 @@ export default function App() {
                 </div>
 
                 {/* Products Grid */}
-                {filteredProducts.length === 0 ? (
-                  <motion.div 
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="py-20 text-center bg-white rounded-3xl border border-slate-200 shadow-3xs text-slate-400 flex flex-col items-center justify-center"
-                  >
-                    <ShoppingBag size={48} className="text-slate-200 mb-2.5 animate-pulse" />
-                    <span className="text-sm font-semibold">No se encontraron artículos para tu filtro.</span>
-                    <span className="text-xs opacity-70 mt-1">Prueba cambiando tu búsqueda o seleccionando otra categoría.</span>
-                  </motion.div>
-                ) : (
-                  <motion.div 
-                    layout
-                    className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-6"
-                  >
-                    <AnimatePresence mode="popLayout">
-                      {paginatedProducts.map((prod, idx) => (
-                        <ProductCard
-                          key={prod.id}
-                          product={prod}
-                          showPrices={storeConfig.showPrices}
-                          whatsappNumber={storeConfig.whatsappNumber}
-                          whatsappCustomMessage={storeConfig.whatsappCustomMessage}
-                          onOpenDetails={handleSelectProduct}
-                          onWhatsAppInquiry={handleWhatsAppInquiry}
-                          index={idx}
-                        />
-                      ))}
-                    </AnimatePresence>
-                  </motion.div>
-                )}
+                <AnimatePresence mode="wait">
+                  {filteredProducts.length === 0 ? (
+                    <motion.div 
+                      key="empty-state"
+                      initial={{ opacity: 0, scale: 0.98 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.98 }}
+                      transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+                      className="py-20 text-center bg-white rounded-3xl border border-slate-200 shadow-3xs text-slate-400 flex flex-col items-center justify-center"
+                    >
+                      <ShoppingBag size={48} className="text-slate-200 mb-2.5 animate-pulse" />
+                      <span className="text-sm font-semibold">No se encontraron artículos para tu filtro.</span>
+                      <span className="text-xs opacity-70 mt-1">Prueba cambiando tu búsqueda o seleccionando otra categoría.</span>
+                    </motion.div>
+                  ) : (
+                    <motion.div 
+                      key={`grid-${selectedCategory}-${currentPage}`}
+                      initial={{ opacity: 0, scale: 0.97 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.97 }}
+                      transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+                      className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-6"
+                    >
+                      <AnimatePresence mode="popLayout">
+                        {paginatedProducts.map((prod, idx) => (
+                          <ProductCard
+                            key={prod.id}
+                            product={prod}
+                            showPrices={storeConfig.showPrices}
+                            whatsappNumber={storeConfig.whatsappNumber}
+                            whatsappCustomMessage={storeConfig.whatsappCustomMessage}
+                            onOpenDetails={handleSelectProduct}
+                            onWhatsAppInquiry={handleWhatsAppInquiry}
+                            index={idx}
+                          />
+                        ))}
+                      </AnimatePresence>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
 
                 {/* Pagination Controls */}
                 {filteredProducts.length > 0 && (

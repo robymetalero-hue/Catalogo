@@ -658,9 +658,87 @@ export default function AdminPanel({
     }
   };
 
+  const [cloudErrors, setCloudErrors] = useState<any[]>([]);
+  const [loadingCloudErrors, setLoadingCloudErrors] = useState(false);
+
+  const fetchCloudErrors = async () => {
+    setLoadingCloudErrors(true);
+    try {
+      const res = await fetch("/api/errors", {
+        headers: { "Authorization": currentUser?.uid || "" }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setCloudErrors(data);
+      }
+    } catch (err) {
+      console.error("Error al obtener errores de la nube:", err);
+    } finally {
+      setLoadingCloudErrors(false);
+    }
+  };
+
+  const handleResolveError = async (id: string) => {
+    try {
+      const res = await fetch("/api/errors/resolve", {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": currentUser?.uid || ""
+        },
+        body: JSON.stringify({ id })
+      });
+      if (res.ok) {
+        showToast("Falla técnica marcada como resuelta.", "success");
+        fetchCloudErrors();
+      } else {
+        showToast("No se pudo actualizar el estado de la falla.", "error");
+      }
+    } catch (err: any) {
+      showToast("Error de conexión: " + err.message, "error");
+    }
+  };
+
+  const handleResolveAllErrors = async () => {
+    if (!confirm("¿Deseas marcar todos los errores pendientes como resueltos?")) return;
+    try {
+      const res = await fetch("/api/errors/resolve", {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": currentUser?.uid || ""
+        },
+        body: JSON.stringify({ resolveAll: true })
+      });
+      if (res.ok) {
+        showToast("Todos los errores marcados como resueltos.", "success");
+        fetchCloudErrors();
+      }
+    } catch (err: any) {
+      showToast("Error de conexión: " + err.message, "error");
+    }
+  };
+
+  const handleClearAllErrors = async () => {
+    if (!confirm("¿Estás seguro de que deseas vaciar por completo el historial técnico? Esta acción borrará todos los registros permanentemente.")) return;
+    try {
+      const res = await fetch("/api/errors/clear", {
+        method: "DELETE",
+        headers: { "Authorization": currentUser?.uid || "" }
+      });
+      if (res.ok) {
+        showToast("Historial técnico vaciado permanentemente.", "success");
+        setCloudErrors([]);
+      }
+    } catch (err: any) {
+      showToast("Error de conexión: " + err.message, "error");
+    }
+  };
+
   useEffect(() => {
     if (activeTab === "diagnostics") {
       fetchDiagnostics();
+      fetchCloudErrors();
     }
   }, [activeTab]);
 
@@ -679,6 +757,7 @@ export default function AdminPanel({
   const [bannerStyle, setBannerStyle] = useState<"classic" | "compact">(storeConfig.bannerStyle || "classic");
   const [promoBannerText, setPromoBannerText] = useState(storeConfig.promoBannerText || "");
   const [storeImagesList, setStoreImagesList] = useState<string[]>([""]);
+  const [errorNotificationEmail, setErrorNotificationEmail] = useState(storeConfig.errorNotificationEmail || "robymetalero@gmail.com");
 
   // Categories management states
   const [categoriesList, setCategoriesList] = useState<string[]>(() => {
@@ -726,6 +805,7 @@ export default function AdminPanel({
       setBannerStyle(storeConfig.bannerStyle || "classic");
       setPromoBannerText(storeConfig.promoBannerText || "");
       setStoreImagesList(storeConfig.storeImages && storeConfig.storeImages.length > 0 ? [...storeConfig.storeImages] : [""]);
+      setErrorNotificationEmail(storeConfig.errorNotificationEmail || "robymetalero@gmail.com");
       if ((storeConfig as any).customCategories && (storeConfig as any).customCategories.length > 0) {
         setCategoriesList([...(storeConfig as any).customCategories]);
       }
@@ -1599,6 +1679,7 @@ export default function AdminPanel({
       bannerStyle: bannerStyle,
       promoBannerText: promoBannerText.trim(),
       storeImages: storeImagesList.filter(url => url.trim() !== ""),
+      errorNotificationEmail: errorNotificationEmail.trim(),
       updatedAt: new Date()
     };
 
@@ -3492,6 +3573,24 @@ export default function AdminPanel({
                   />
                   <span className="text-[9px] text-slate-400 block mt-0.5">Deja este campo vacío si no deseas mostrar una cinta de aviso promocional.</span>
                 </div>
+
+                <div className="pt-2 border-t border-slate-100">
+                  <div className="flex items-center gap-1.5 text-rose-600 mb-1.5">
+                    <Shield size={14} className="shrink-0" />
+                    <label className="block text-xs font-bold font-sans">Canal de Alertas y Errores del Sistema</label>
+                  </div>
+                  <input
+                    type="email"
+                    value={errorNotificationEmail}
+                    onChange={(e) => setErrorNotificationEmail(e.target.value)}
+                    className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs focus:outline-hidden"
+                    placeholder="Ej: tu-correo@ejemplo.com"
+                    required
+                  />
+                  <span className="text-[9px] text-slate-400 block mt-0.5">
+                    Designa una cuenta de correo electrónico para centralizar el envío de alertas de fallas y diagnósticos reportados por clientes y usuarios.
+                  </span>
+                </div>
               </div>
             </div>
           </div>
@@ -3844,6 +3943,144 @@ export default function AdminPanel({
                         <span className="text-[10px] text-emerald-950 font-bold uppercase tracking-wider block">Solución Sugerida:</span>
                         <div className="text-emerald-900 leading-relaxed font-sans text-[11px] whitespace-pre-line font-medium">
                           {log.solution}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Persistent Database Log History for Clients & Users */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xs animate-fadeIn space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-3.5">
+              <div>
+                <h3 className="font-sans font-semibold text-base text-slate-800 flex items-center gap-2">
+                  <Shield className="text-rose-500" size={18} />
+                  <span>Bitácora de Errores de Clientes y Usuarios (En la Nube)</span>
+                </h3>
+                <p className="text-xs text-slate-400">Recopila y consolida todas las fallas que experimentan tus clientes y usuarios en vivo, para que puedas identificarlas y resolverlas de inmediato.</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={fetchCloudErrors}
+                  disabled={loadingCloudErrors}
+                  className="px-2.5 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <RefreshCw size={12} className={loadingCloudErrors ? "animate-spin" : ""} />
+                  <span>Actualizar</span>
+                </button>
+                {cloudErrors.some(e => !e.isResolved) && (
+                  <button
+                    type="button"
+                    onClick={handleResolveAllErrors}
+                    className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 hover:text-emerald-800 border border-emerald-100 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
+                  >
+                    <CheckCircle size={12} />
+                    <span>Resolver Todos</span>
+                  </button>
+                )}
+                {cloudErrors.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleClearAllErrors}
+                    className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 border border-rose-150 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
+                  >
+                    <Trash2 size={12} />
+                    <span>Vaciar Historial</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {loadingCloudErrors ? (
+              <div className="py-8 flex flex-col items-center justify-center gap-2">
+                <RefreshCw size={24} className="animate-spin text-indigo-500" />
+                <p className="text-xs text-slate-400 font-medium">Cargando bitácora de la nube...</p>
+              </div>
+            ) : cloudErrors.length === 0 ? (
+              <div className="p-6 border border-slate-150 rounded-xl bg-slate-50/50 text-center space-y-1.5">
+                <CheckCircle className="text-emerald-500 mx-auto" size={24} />
+                <div className="space-y-0.5">
+                  <span className="font-bold text-xs text-slate-700 block">¡Sin Errores Registrados!</span>
+                  <span className="text-[11px] text-slate-400 max-w-md mx-auto block leading-normal">
+                    La base de datos no registra ninguna falla reportada por clientes o usuarios. Tu aplicación está operando al 100% de efectividad.
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
+                {cloudErrors.map((log) => (
+                  <div key={log.id} className={`border rounded-xl p-4 space-y-3 bg-slate-50/55 text-xs transition-all ${
+                    log.isResolved ? "border-slate-200 opacity-60" : "border-rose-150 bg-rose-50/5"
+                  }`}>
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-150/70 pb-2">
+                      <div className="flex flex-wrap items-center gap-1.5 font-sans">
+                        <span className={`font-bold px-1.5 py-0.5 rounded border text-[10px] ${
+                          log.isResolved 
+                            ? "bg-slate-100 text-slate-500 border-slate-200"
+                            : "bg-rose-50 text-rose-600 border-rose-100"
+                        }`}>
+                          Falla en: {log.action}
+                        </span>
+                        <span className="font-medium text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded text-[10px]">
+                          {log.userRole || "Cliente"}: {log.userEmail || "Anónimo"}
+                        </span>
+                        {log.code && <span className="font-mono text-slate-400 text-[10px]">Cód: {log.code}</span>}
+                        {log.status && <span className="font-mono text-slate-400 text-[10px]">HTTP: {log.status}</span>}
+                        {log.isResolved && (
+                          <span className="bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold px-1.5 py-0.5 rounded text-[10px] flex items-center gap-1">
+                            <CheckCircle size={10} />
+                            <span>Resuelto</span>
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        {log.timestamp ? new Date(log.timestamp).toLocaleString("es-ES") : "Desconocido"}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <div>
+                          <span className="text-[10px] font-mono text-slate-400 font-bold uppercase tracking-wider block">Detalle de la Falla:</span>
+                          <p className="font-mono font-medium text-rose-950 bg-rose-50/40 p-2 rounded border border-rose-100 text-[10px] whitespace-pre-wrap max-h-24 overflow-y-auto">
+                            {log.message}
+                          </p>
+                        </div>
+                        {log.path && (
+                          <div>
+                            <span className="text-[10px] font-mono text-slate-400 font-bold uppercase tracking-wider block">Ruta / Pantalla:</span>
+                            <span className="font-mono text-[10px] text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded">{log.path}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="space-y-2">
+                        {log.deviceDetails && (
+                          <div>
+                            <span className="text-[10px] font-sans text-slate-400 font-bold uppercase tracking-wider block">Dispositivo del Cliente:</span>
+                            <div className="text-[10px] text-slate-600 font-medium space-y-0.5 leading-tight font-mono bg-slate-100/60 p-2 rounded border border-slate-150">
+                              <div>SO/Plataforma: {log.deviceDetails.platform || "Web"}</div>
+                              <div className="truncate">Navegador: {log.deviceDetails.userAgent || "Desconocido"}</div>
+                              {log.deviceDetails.screenSize && <div>Pantalla: {log.deviceDetails.screenSize}</div>}
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="flex items-center gap-2 justify-end pt-2">
+                          {!log.isResolved && (
+                            <button
+                              type="button"
+                              onClick={() => handleResolveError(log.id)}
+                              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer animate-slideUp"
+                            >
+                              <Check size={10} />
+                              <span>Marcar como Resuelto</span>
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>
