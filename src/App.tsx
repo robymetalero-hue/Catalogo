@@ -15,7 +15,7 @@ import {
 } from "firebase/firestore";
 import { 
   Lock, LogOut, CheckCircle2, ShoppingBag, Grid, Compass, Smartphone, AlertCircle, X, ShieldAlert, Share2, Sparkles, HelpCircle, Send, ArrowLeft, RefreshCw,
-  ChevronLeft, ChevronRight
+  ChevronLeft, ChevronRight, MapPin
 } from "lucide-react";
 import StoreHeader from "./components/StoreHeader";
 import StoreFooter from "./components/StoreFooter";
@@ -1193,30 +1193,115 @@ export default function App() {
 
           <main className="flex-grow max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8 animate-fadeIn font-sans">
             
-            {/* View Tab Switcher */}
-            <div className="flex border-b border-slate-200 mb-8 w-full font-bold text-xs uppercase tracking-wider select-none">
-              <button
-                onClick={() => setActiveViewTab("catalog")}
-                className={`pb-3 px-5 transition-all border-b-2 relative -mb-[2px] ${
-                  activeViewTab === "catalog"
-                    ? "text-amber-600 border-amber-500 font-extrabold"
-                    : "text-slate-400 border-transparent hover:text-slate-700"
-                }`}
-              >
-                🛍️ Catálogo de Productos
-              </button>
-              {(storeConfig.showLocation !== false || (user && user.isAdmin)) && (
+            {/* View Tab Switcher - Fully Animated, Attention-Grabbing & High Fidelity */}
+            <div className="max-w-2xl mx-auto mb-10 px-2 sm:px-0">
+              <div className="bg-slate-100/90 dark:bg-slate-900 p-1.5 rounded-3xl border border-slate-200/50 dark:border-slate-850 shadow-lg shadow-slate-200/10 flex flex-col sm:flex-row gap-2 relative">
+                
+                {/* Tab 1: Catálogo */}
                 <button
-                  onClick={() => setActiveViewTab("location")}
-                  className={`pb-3 px-5 transition-all border-b-2 relative -mb-[2px] ${
-                    activeViewTab === "location"
-                      ? "text-amber-600 border-amber-500 font-extrabold"
-                      : "text-slate-400 border-transparent hover:text-slate-700"
-                  }`}
+                  onClick={() => setActiveViewTab("catalog")}
+                  className="flex-1 relative group focus:outline-none select-none rounded-2xl overflow-hidden py-3 px-4 transition-all"
                 >
-                  📍 Ubicación y Fotos
+                  {/* Sliding active background marker */}
+                  {activeViewTab === "catalog" && (
+                    <motion.div
+                      layoutId="activeTabGlow"
+                      className="absolute inset-0 bg-gradient-to-r from-amber-500 to-orange-500 rounded-2xl shadow-md shadow-amber-500/25"
+                      transition={{ type: "spring", stiffness: 350, damping: 28 }}
+                    />
+                  )}
+                  
+                  {/* Content container */}
+                  <div className="relative z-10 flex items-center justify-center gap-3.5">
+                    {/* Dynamic Moving Icon */}
+                    <motion.div
+                      animate={activeViewTab === "catalog" 
+                        ? { y: [0, -3, 0], scale: [1, 1.08, 1] } 
+                        : { y: 0, scale: 1 }
+                      }
+                      transition={activeViewTab === "catalog"
+                        ? { repeat: Infinity, duration: 2, ease: "easeInOut" }
+                        : {}
+                      }
+                      className={`p-2 rounded-xl transition-all ${
+                        activeViewTab === "catalog"
+                          ? "bg-white/20 text-white"
+                          : "bg-slate-200/60 text-slate-500 group-hover:bg-slate-200/90 group-hover:text-slate-700"
+                      }`}
+                    >
+                      <ShoppingBag className="w-5 h-5" />
+                    </motion.div>
+                    
+                    {/* Labels */}
+                    <div className="text-left">
+                      <span className={`block font-black text-xs uppercase tracking-wider transition-colors ${
+                        activeViewTab === "catalog" ? "text-white" : "text-slate-800"
+                      }`}>
+                        Catálogo de Productos
+                      </span>
+                      <span className={`block text-[10px] font-semibold tracking-wide mt-0.5 transition-colors ${
+                        activeViewTab === "catalog" ? "text-amber-100" : "text-slate-400"
+                      }`}>
+                        Ver catálogo y existencias
+                      </span>
+                    </div>
+                  </div>
                 </button>
-              )}
+
+                {/* Tab 2: Ubicación */}
+                {(storeConfig.showLocation !== false || (user && user.isAdmin)) && (
+                  <button
+                    onClick={() => setActiveViewTab("location")}
+                    className="flex-1 relative group focus:outline-none select-none rounded-2xl overflow-hidden py-3 px-4 transition-all"
+                  >
+                    {/* Sliding active background marker */}
+                    {activeViewTab === "location" && (
+                      <motion.div
+                        layoutId="activeTabGlow"
+                        className="absolute inset-0 bg-gradient-to-r from-amber-500 to-orange-500 rounded-2xl shadow-md shadow-amber-500/25"
+                        transition={{ type: "spring", stiffness: 350, damping: 28 }}
+                      />
+                    )}
+                    
+                    {/* Content container */}
+                    <div className="relative z-10 flex items-center justify-center gap-3.5">
+                      {/* Dynamic Moving Icon */}
+                      <motion.div
+                        animate={activeViewTab === "location" 
+                          ? { y: [0, -4, 0] } 
+                          : { y: 0 }
+                        }
+                        transition={activeViewTab === "location"
+                          ? { repeat: Infinity, duration: 1.8, ease: "easeInOut" }
+                          : {}
+                        }
+                        className={`p-2 rounded-xl transition-all ${
+                          activeViewTab === "location"
+                            ? "bg-white/20 text-white"
+                            : "bg-slate-200/60 text-slate-500 group-hover:bg-slate-200/90 group-hover:text-slate-700"
+                        }`}
+                      >
+                        <MapPin className="w-5 h-5" />
+                      </motion.div>
+                      
+                      {/* Labels */}
+                      <div className="text-left">
+                        <span className={`block font-black text-xs uppercase tracking-wider transition-colors ${
+                          activeViewTab === "location" ? "text-white" : "text-slate-800"
+                        }`}>
+                          Ubicación y Fotos
+                        </span>
+                        <span className={`block text-[10px] font-semibold tracking-wide mt-0.5 transition-colors ${
+                          activeViewTab === "location" ? "text-amber-100" : "text-slate-400"
+                        }`}>
+                          Cómo llegar y tienda física
+                        </span>
+                      </div>
+                    </div>
+                  </button>
+                )}
+                
+              </div>
             </div>
 
             {activeViewTab === "catalog" ? (
