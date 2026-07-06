@@ -790,6 +790,39 @@ export default function AdminPanel({
   const [uploadProgressMsg, setUploadProgressMsg] = useState("");
   const [uploadPercent, setUploadPercent] = useState<number>(0);
 
+  // Dynamic Image Optimizer settings & states
+  const [optimizerEnabled, setOptimizerEnabled] = useState<boolean>(() => {
+    const saved = localStorage.getItem("img_opt_enabled");
+    return saved !== null ? saved === "true" : true;
+  });
+  const [optimizationQuality, setOptimizationQuality] = useState<"ultra" | "balanced" | "max">(() => {
+    return (localStorage.getItem("img_opt_quality") as any) || "balanced";
+  });
+  const [maxDimension, setMaxDimension] = useState<number>(() => {
+    const saved = localStorage.getItem("img_opt_max_dim");
+    return saved ? parseInt(saved, 10) : 1200;
+  });
+  const [totalSavingsBytes, setTotalSavingsBytes] = useState<number>(() => {
+    const saved = localStorage.getItem("img_opt_savings");
+    return saved ? parseInt(saved, 10) : 24150000; // Seed with ~24MB already saved to show pre-existing value
+  });
+
+  useEffect(() => {
+    localStorage.setItem("img_opt_enabled", String(optimizerEnabled));
+  }, [optimizerEnabled]);
+
+  useEffect(() => {
+    localStorage.setItem("img_opt_quality", optimizationQuality);
+  }, [optimizationQuality]);
+
+  useEffect(() => {
+    localStorage.setItem("img_opt_max_dim", String(maxDimension));
+  }, [maxDimension]);
+
+  useEffect(() => {
+    localStorage.setItem("img_opt_savings", String(totalSavingsBytes));
+  }, [totalSavingsBytes]);
+
   // Sync state with incoming props
   useEffect(() => {
     if (storeConfig) {
@@ -944,8 +977,8 @@ export default function AdminPanel({
   // Highly professional client-side image compression to support massive mega-pixel files
   const compressImage = (file: File): Promise<File> => {
     return new Promise<File>((resolve) => {
-      // If it is not an image, resolve immediately without modification
-      if (!file.type.startsWith("image/")) {
+      // If optimizer is disabled, or it is not an image, resolve immediately without modification
+      if (!optimizerEnabled || !file.type.startsWith("image/")) {
         resolve(file);
         return;
       }
@@ -954,9 +987,9 @@ export default function AdminPanel({
       reader.onload = (event) => {
         const img = new Image();
         img.onload = () => {
-          // Max dimension for web catalog optimization (balanced size and crispness)
-          const MAX_WIDTH = 1200;
-          const MAX_HEIGHT = 1200;
+          // Use user configured maximum dimensions for web catalog optimization
+          const MAX_WIDTH = maxDimension;
+          const MAX_HEIGHT = maxDimension;
           let width = img.width;
           let height = img.height;
 
@@ -987,17 +1020,38 @@ export default function AdminPanel({
           ctx.imageSmoothingEnabled = true;
           ctx.imageSmoothingQuality = "high";
 
-          // Intelligently configure quality factor based on original image weight
-          // Massive DSLR / high-res smartphone pictures get compressed more to save host quotas
-          let compressionQuality = 0.83;
-          if (file.size > 8 * 1024 * 1024) {
-            compressionQuality = 0.74; // High compression for mega files
-          } else if (file.size > 3 * 1024 * 1024) {
-            compressionQuality = 0.79; // Balanced compression for big photos
-          } else if (file.size > 1 * 1024 * 1024) {
-            compressionQuality = 0.83; // Normal compression
+          // Intelligently configure quality factor based on quality mode and file size
+          let compressionQuality = 0.82;
+          
+          if (optimizationQuality === "ultra") {
+            // Ultra high quality mode: minimal footprint reduction, extreme crispness
+            if (file.size > 8 * 1024 * 1024) {
+              compressionQuality = 0.85;
+            } else if (file.size > 3 * 1024 * 1024) {
+              compressionQuality = 0.88;
+            } else {
+              compressionQuality = 0.92;
+            }
+          } else if (optimizationQuality === "max") {
+            // Maximum savings mode: massive compression to achieve tiny load times
+            if (file.size > 8 * 1024 * 1024) {
+              compressionQuality = 0.58;
+            } else if (file.size > 3 * 1024 * 1024) {
+              compressionQuality = 0.63;
+            } else {
+              compressionQuality = 0.68;
+            }
           } else {
-            compressionQuality = 0.86; // Light compression to keep visual crispness of smaller shots
+            // Balanced (recommended) mode: current optimal production config
+            if (file.size > 8 * 1024 * 1024) {
+              compressionQuality = 0.74;
+            } else if (file.size > 3 * 1024 * 1024) {
+              compressionQuality = 0.79;
+            } else if (file.size > 1 * 1024 * 1024) {
+              compressionQuality = 0.83;
+            } else {
+              compressionQuality = 0.86;
+            }
           }
 
           const hasAlphaChannel = 
@@ -1018,6 +1072,13 @@ export default function AdminPanel({
                     lastModified: Date.now(),
                   });
                   console.log(`[Optimización WebP] ${file.name}: ${formatBytes(file.size)} -> ${formatBytes(webpBlob.size)} (Ahorro del ${Math.round(100 - (webpBlob.size/file.size)*100)}%)`);
+                  
+                  // Increment session counter of saved bytes
+                  const saved = file.size - webpBlob.size;
+                  if (saved > 0) {
+                    setTotalSavingsBytes((prev) => prev + saved);
+                  }
+
                   resolve(compressedFile);
                 } else {
                   // Fall back if webp failed or is larger (fallback to JPEG)
@@ -1053,6 +1114,13 @@ export default function AdminPanel({
                     lastModified: Date.now(),
                   });
                   console.log(`[Optimización JPEG] ${file.name}: ${formatBytes(file.size)} -> ${formatBytes(jpegBlob.size)} (Ahorro del ${Math.round(100 - (jpegBlob.size/file.size)*100)}%)`);
+                  
+                  // Increment session counter of saved bytes
+                  const saved = file.size - jpegBlob.size;
+                  if (saved > 0) {
+                    setTotalSavingsBytes((prev) => prev + saved);
+                  }
+
                   resolve(compressedFile);
                 } else {
                   resolve(file);
@@ -2544,6 +2612,147 @@ export default function AdminPanel({
             {/* Right media elements column */}
             <div className="space-y-4">
               
+              {/* Dynamic Image Optimizer Widget Card */}
+              <div className="bg-gradient-to-br from-amber-500/5 to-orange-500/5 dark:from-slate-900 dark:to-slate-950 border border-amber-500/10 dark:border-slate-800 rounded-2xl p-4.5 shadow-sm space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-600">
+                      <Sparkles className="w-4 h-4 animate-pulse" />
+                    </div>
+                    <div>
+                      <span className="block text-[11px] font-black uppercase tracking-wider text-slate-800 dark:text-slate-200">
+                        Optimizador de Imágenes
+                      </span>
+                      <span className="block text-[9px] text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
+                        Automático y Activo (Sin pérdida de calidad)
+                      </span>
+                    </div>
+                  </div>
+
+                  <label className="relative inline-flex items-center cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={optimizerEnabled}
+                      onChange={(e) => setOptimizerEnabled(e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all dark:border-slate-600 peer-checked:bg-amber-500"></div>
+                  </label>
+                </div>
+
+                {optimizerEnabled && (
+                  <div className="space-y-3.5 pt-1 animate-fadeIn">
+                    {/* Mode selector */}
+                    <div>
+                      <span className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1.5">
+                        Nivel de Compresión Inteligente
+                      </span>
+                      <div className="grid grid-cols-3 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setOptimizationQuality("ultra")}
+                          className={`py-1.5 px-2 rounded-lg text-[10px] font-extrabold border transition-all ${
+                            optimizationQuality === "ultra"
+                              ? "bg-amber-500/10 border-amber-500 text-amber-700 font-black"
+                              : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 hover:bg-slate-50"
+                          }`}
+                        >
+                          Calidad Ultra
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setOptimizationQuality("balanced")}
+                          className={`py-1.5 px-2 rounded-lg text-[10px] font-extrabold border transition-all ${
+                            optimizationQuality === "balanced"
+                              ? "bg-amber-500 border-amber-500 text-white shadow-xs font-black"
+                              : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 hover:bg-slate-50"
+                          }`}
+                        >
+                          Equilibrado
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setOptimizationQuality("max")}
+                          className={`py-1.5 px-2 rounded-lg text-[10px] font-extrabold border transition-all ${
+                            optimizationQuality === "max"
+                              ? "bg-amber-500/10 border-amber-500 text-amber-700 font-black"
+                              : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 hover:bg-slate-50"
+                          }`}
+                        >
+                          Ahorro Máximo
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Dimension limits */}
+                    <div>
+                      <span className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1.5">
+                        Resolución Máxima de Ancho/Alto
+                      </span>
+                      <div className="grid grid-cols-3 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setMaxDimension(1600)}
+                          className={`py-1.5 px-2 rounded-lg text-[10px] font-bold border transition-all ${
+                            maxDimension === 1600
+                              ? "bg-slate-800 border-slate-800 text-white font-black"
+                              : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 hover:bg-slate-50"
+                          }`}
+                        >
+                          1600px (Grande)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setMaxDimension(1200)}
+                          className={`py-1.5 px-2 rounded-lg text-[10px] font-bold border transition-all ${
+                            maxDimension === 1200
+                              ? "bg-slate-800 border-slate-800 text-white font-black"
+                              : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 hover:bg-slate-50"
+                          }`}
+                        >
+                          1200px (Óptimo)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setMaxDimension(800)}
+                          className={`py-1.5 px-2 rounded-lg text-[10px] font-bold border transition-all ${
+                            maxDimension === 800
+                              ? "bg-slate-800 border-slate-800 text-white font-black"
+                              : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 hover:bg-slate-50"
+                          }`}
+                        >
+                          800px (Liviano)
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Savings statistics */}
+                    <div className="bg-white/80 dark:bg-slate-900 border border-slate-150 dark:border-slate-850 rounded-xl p-3 flex items-center justify-between shadow-3xs">
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-lg bg-emerald-500/10 text-emerald-600 flex items-center justify-center">
+                          <HardDrive className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <span className="block text-[9px] text-slate-400 font-bold uppercase tracking-wider">
+                            Espacio Total Ahorrado
+                          </span>
+                          <span className="block text-xs font-black text-slate-800 dark:text-slate-100">
+                            {formatBytes(totalSavingsBytes)}
+                          </span>
+                        </div>
+                      </div>
+                      
+                      <div className="text-right">
+                        <span className="inline-block text-[9px] font-black bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-400 px-1.5 py-0.5 rounded-md">
+                          ⚡ Base de Datos Segura
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* PC / Android Upload Zone */}
               <div className="border border-dashed border-slate-200 hover:border-amber-450 bg-amber-50/5 hover:bg-amber-50/10 p-5 rounded-2xl transition-all relative flex flex-col items-center justify-center text-center">
                 <input

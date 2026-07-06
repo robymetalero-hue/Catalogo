@@ -414,9 +414,13 @@ export default function App() {
     }
   };
 
-  // Initial load of products and configuration from Google Cloud SQL (PostgreSQL)
+  // Carga inicial ultra rápida: Si ya contamos con productos y configuración en la memoria caché
+  // local del navegador, cargamos los datos en segundo plano silenciosamente. Esto evita mostrar
+  // una pantalla en blanco con skeletons y permite que la página se pinte instantáneamente (0ms).
+  // Solo se mostrará el cargador visual (skeleton) en la primera visita cuando no haya caché.
   useEffect(() => {
-    refreshAll();
+    const hasCache = products.length > 0 && storeConfig && storeConfig.storeName !== "Mi Catálogo de WhatsApp";
+    refreshAll(hasCache);
   }, []);
 
   // Real-time listener for products and config updates to trigger "update available" prompt

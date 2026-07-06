@@ -5,12 +5,19 @@
 
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import { getFirestore, doc, getDocFromServer, enableMultiTabIndexedDbPersistence } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import firebaseConfig from '../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId); /* CRITICAL: The app will break without this line */
+
+// Habilitar persistencia de caché fuera de línea (IndexedDB multi-pestaña)
+// para lograr cargas de página instantáneas y rendimiento óptimo en redes móviles lentas
+enableMultiTabIndexedDbPersistence(db).catch((err) => {
+  console.warn("[Firebase Persistence] No se pudo habilitar la persistencia local:", err.message);
+});
+
 export const auth = getAuth(app);
 export const storage = getStorage(app);
 
