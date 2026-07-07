@@ -24,6 +24,7 @@ import ProductDetailsModal from "./components/ProductDetailsModal";
 import AdminPanel from "./components/AdminPanel";
 import ShareCatalogModal from "./components/ShareCatalogModal";
 import StoreLocationSection from "./components/StoreLocationSection";
+import VipPortal from "./components/VipPortal";
 import { CatalogSkeleton } from "./components/ProductSkeleton";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -131,6 +132,16 @@ export default function App() {
     } catch (e) {}
     return false;
   });
+
+  const [isVipView, setIsVipView] = useState(() => window.location.pathname === "/vip");
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setIsVipView(window.location.pathname === "/vip");
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
 
   // Ensure client-side Firebase Auth has an active session when an admin is logged in
   useEffect(() => {
@@ -1076,6 +1087,19 @@ export default function App() {
     }
     return pages;
   };
+
+  if (isVipView) {
+    return (
+      <VipPortal
+        products={products}
+        storeConfig={storeConfig}
+        onBackToPublic={() => {
+          window.history.pushState({}, "", "/");
+          setIsVipView(false);
+        }}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-800 antialiased selection:bg-amber-100 selection:text-amber-900">

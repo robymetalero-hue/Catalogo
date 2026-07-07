@@ -140,6 +140,41 @@
         }
       },
       "required": ["username", "password", "name", "role"]
+    },
+    "VipAccess": {
+      "title": "Configuración de Acceso VIP",
+      "description": "Configuración del PIN, departamentos habilitados y sesión del cliente VIP",
+      "type": "object",
+      "properties": {
+        "clientName": { "type": "string" },
+        "pinHash": { "type": "string" },
+        "allowedDepartments": { "type": "array" },
+        "sessionDurationMinutes": { "type": "number" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "VipAnalytics": {
+      "title": "Evento de Analíticas VIP",
+      "description": "Acciones y comportamiento de los clientes VIP en el portal",
+      "type": "object",
+      "properties": {
+        "accessId": { "type": "string" },
+        "eventType": { "type": "string" },
+        "timestamp": { "type": "string" }
+      }
+    },
+    "VipOrder": {
+      "title": "Pedido VIP",
+      "description": "Pedido generado de manera segura por un usuario VIP",
+      "type": "object",
+      "properties": {
+        "accessId": { "type": "string" },
+        "clientName": { "type": "string" },
+        "total": { "type": "number" },
+        "createdAt": { "type": "string" }
+      }
     }
   },
   "firestore": {
@@ -154,6 +189,18 @@
     "/users/{userId}": {
       "schema": "User",
       "description": "Lista de usuarios y colaboradores autorizados"
+    },
+    "/vip_accesses/{accessId}": {
+      "schema": "VipAccess",
+      "description": "Accesos VIP parametrizados por los administradores"
+    },
+    "/vip_analytics/{eventId}": {
+      "schema": "VipAnalytics",
+      "description": "Bitácora de analíticas del comportamiento de usuarios VIP"
+    },
+    "/vip_orders/{orderId}": {
+      "schema": "VipOrder",
+      "description": "Registro de compras y pedidos generados desde el canal VIP"
     }
   }
 }

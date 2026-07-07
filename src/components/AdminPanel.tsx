@@ -12,6 +12,7 @@ import {
   Database, HardDrive, AlertTriangle, CheckCircle, Shield, HelpCircle, Terminal
 } from "lucide-react";
 import { validateImageFile } from "../utils/imageUtils";
+import AdminVipAccessPanel from "./AdminVipAccessPanel";
 import {
   BarChart,
   Bar,
@@ -239,7 +240,7 @@ export default function AdminPanel({
   const CHART_COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EC4899', '#8B5CF6', '#EF4444', '#06B6D4', '#64748B'];
 
   // Global States
-  const [activeTab, setActiveTab] = useState<"products" | "store" | "diagnostics" | "users" | "categories">("products");
+  const [activeTab, setActiveTab] = useState<"products" | "store" | "diagnostics" | "users" | "categories" | "vip">("products");
   const [analyticsTab, setAnalyticsTab] = useState<"products" | "categories" | "conversion">("products");
   const [message, setMessage] = useState<{ text: string; type: "success" | "error" | "warning" } | null>(null);
   const [loading, setLoading] = useState(false);
@@ -2450,6 +2451,18 @@ export default function AdminPanel({
               >
                 <Shield size={12} className={activeTab === "users" ? "text-amber-500" : "text-slate-400"} />
                 <span>Usuarios y Roles</span>
+              </button>
+
+              <button
+                onClick={() => { setActiveTab("vip"); setIsEditingProduct(false); setIsEditingUser(false); }}
+                className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center gap-1 ${
+                  activeTab === "vip"
+                    ? "bg-white text-slate-900 shadow-sm"
+                    : "text-slate-500 hover:text-slate-900"
+                }`}
+              >
+                <Sparkles size={12} className={activeTab === "vip" ? "text-amber-500" : "text-slate-400"} />
+                <span>Accesos VIP</span>
               </button>
             </>
           )}
@@ -4667,6 +4680,8 @@ export default function AdminPanel({
             </div>
           )}
         </div>
+      ) : activeTab === "vip" ? (
+        <AdminVipAccessPanel products={products} categories={categoriesList} />
       ) : null}
     </div>
   );

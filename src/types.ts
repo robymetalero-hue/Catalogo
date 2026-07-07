@@ -48,3 +48,62 @@ export interface AdminUser {
   isAdmin: boolean;
   role?: string;
 }
+
+export interface VipAccess {
+  id: string;
+  clientName: string;
+  pinHash: string;
+  pinLastDigits?: string; // e.g. "****" or last digit
+  allowedDepartments: string[];
+  sessionDurationMinutes: number;
+  status: "active" | "used" | "expired" | "blocked" | "revoked";
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+  firstUsedAt?: string | null;
+  sessionStartedAt?: string | null;
+  sessionExpiresAt?: string | null;
+  deviceTokenHash?: string | null;
+  deviceInfo?: {
+    userAgent: string;
+    platform: string;
+    screenResolution?: string;
+  } | null;
+  failedAttempts: number;
+  maxFailedAttempts: number;
+  lastAttemptAt?: string | null;
+  notes?: string;
+  whatsappLastGeneratedAt?: string;
+}
+
+export interface VipAnalyticsEvent {
+  id: string;
+  accessId: string;
+  clientName: string;
+  eventType: "session_start" | "product_view" | "product_view_duration" | "image_click" | "whatsapp_click" | "search" | "order_created" | "session_end" | "session_expired";
+  productId?: string;
+  productName?: string;
+  departmentId?: string;
+  timestamp: string;
+  durationSeconds?: number;
+  metadata?: any;
+}
+
+export interface VipOrder {
+  id: string;
+  accessId: string;
+  clientName: string;
+  items: {
+    productId: string;
+    name: string;
+    sku: string;
+    price: number;
+    quantity: number;
+    category: string;
+  }[];
+  total: number;
+  status: "pending" | "completed" | "cancelled";
+  createdAt: string;
+  whatsappMessage?: string;
+  departmentSummary?: string;
+}

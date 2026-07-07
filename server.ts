@@ -777,6 +777,467 @@ async function startServer() {
     }
   });
 
+  // --- VIP PORTAL ACCESS & ANALYTICS SECURE BACKEND ENDPOINTS ---
+
+  const crypto = await import("crypto");
+
+  function hashPin(pin: string): string {
+    return crypto.createHash("sha256").update(pin).digest("hex");
+  }
+
+  function hashDeviceToken(token: string): string {
+    return crypto.createHash("sha256").update(token).digest("hex");
+  }
+
+  const failedVipAttempts = new Map<string, { count: number; lastAttempt: number }>();
+
+  const getClientIp = (req: any): string => {
+    return req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown-ip";
+  };
+
+  // 1. VIP Client Login (Validates PIN, handles device-binding, generates session token)
+  app.post("/api/vip/login", async (req, res) => {
+    try {
+      const { pin, deviceInfo } = req.body;
+      if (!pin) {
+        return res.status(400).json({ error: "Por favor, ingresa el PIN de acceso de 3 o 4 dígitos." });
+      }
+
+      const clientIp = getClientIp(req);
+      const now = Date.now();
+
+      // Brute Force protection - block IP after 10 consecutive failures
+      const ipLimit = failedVipAttempts.get(clientIp);
+      if (ipLimit && ipLimit.count >= 10 && now - ipLimit.lastAttempt < 300000) {
+        const remaining = Math.ceil((300000 - (now - ipLimit.lastAttempt)) / 1000);
+        return res.status(429).json({
+          error: `Has superado el límite de intentos permitidos por seguridad. Inténtalo de nuevo en ${remaining} segundos.`
+        });
+      }
+
+      const pinHash = hashPin(pin.trim());
+      const vipCol = firestoreDb.collection("vip_accesses");
+      const snap = await vipCol.where("pinHash", "==", pinHash).get();
+
+      if (snap.empty) {
+        // Increment IP failures
+        const prev = ipLimit || { count: 0, lastAttempt: 0 };
+        failedVipAttempts.set(clientIp, { count: prev.count + 1, lastAttempt: now });
+        return res.status(401).json({ error: "PIN de acceso incorrecto. Por favor, verifica el PIN enviado por tu vendedor." });
+      }
+
+      const accessDoc = snap.docs[0];
+      const accessId = accessDoc.id;
+      const accessData = accessDoc.data();
+
+      // Check access status
+      if (accessData.status === "blocked") {
+        return res.status(403).json({ error: "Este acceso VIP ha sido bloqueado por seguridad debido a demasiados intentos fallidos o actividad inusual." });
+      }
+      if (accessData.status === "revoked") {
+        return res.status(403).json({ error: "Este acceso VIP ha sido cancelado o revocado por el administrador." });
+      }
+      if (accessData.status === "expired" || accessData.status === "used") {
+        return res.status(403).json({ error: "Este acceso VIP ya ha caducado y no puede volver a utilizarse." });
+      }
+
+      // Check temporal expiration (if expiresAt field is set and past)
+      if (accessData.expiresAt && new Date(accessData.expiresAt).getTime() < now) {
+        await vipCol.doc(accessId).update({ status: "expired" });
+        return res.status(403).json({ error: "Este acceso VIP ha expirado por límite de fecha." });
+      }
+
+      // Check session expiration (if session started and time elapsed)
+      if (accessData.sessionExpiresAt && new Date(accessData.sessionExpiresAt).getTime() < now) {
+        await vipCol.doc(accessId).update({ status: "expired" });
+        return res.status(403).json({ error: "Tu tiempo de sesión VIP ha terminado. Por favor, solicita un nuevo acceso." });
+      }
+
+      const userAgent = req.headers["user-agent"] || "";
+      const platform = deviceInfo?.platform || "web";
+      const incomingDeviceToken = req.body.deviceToken;
+
+      // FIRST USE: BIND DEVICE
+      if (!accessData.firstUsedAt) {
+        const generatedToken = crypto.randomUUID();
+        const generatedTokenHash = hashDeviceToken(generatedToken);
+        const sessionDurationMinutes = accessData.sessionDurationMinutes || 30;
+        const sessionExpiresAt = new Date(now + sessionDurationMinutes * 60 * 1000).toISOString();
+
+        const updatePayload = {
+          firstUsedAt: new Date(now).toISOString(),
+          sessionStartedAt: new Date(now).toISOString(),
+          sessionExpiresAt: sessionExpiresAt,
+          deviceTokenHash: generatedTokenHash,
+          deviceInfo: {
+            userAgent: userAgent.substring(0, 200),
+            platform,
+            screenResolution: deviceInfo?.screenResolution || "unknown"
+          },
+          status: "active" as const,
+          updatedAt: new Date(now).toISOString()
+        };
+
+        await vipCol.doc(accessId).update(updatePayload);
+        failedVipAttempts.delete(clientIp);
+
+        // Register initial session log
+        await firestoreDb.collection("vip_analytics").add({
+          accessId,
+          clientName: accessData.clientName,
+          eventType: "session_start",
+          timestamp: new Date(now).toISOString(),
+          metadata: { platform, ipHash: hashDeviceToken(clientIp) }
+        });
+
+        return res.json({
+          success: true,
+          deviceToken: generatedToken,
+          clientName: accessData.clientName,
+          allowedDepartments: accessData.allowedDepartments,
+          sessionExpiresAt,
+          accessId
+        });
+      } else {
+        // RE-ENTRY / TAB REFRESH
+        if (!incomingDeviceToken) {
+          return res.status(403).json({
+            error: "Este acceso VIP ya está vinculado a otro celular o computadora. No puedes ingresar desde múltiples dispositivos."
+          });
+        }
+
+        const incomingTokenHash = hashDeviceToken(incomingDeviceToken);
+        if (accessData.deviceTokenHash !== incomingTokenHash) {
+          return res.status(403).json({
+            error: "Dispositivo no autorizado. Este PIN quedó vinculado al primer dispositivo donde se abrió. Solicita otro acceso."
+          });
+        }
+
+        // Token matches! Double check time limits
+        if (new Date(accessData.sessionExpiresAt).getTime() < now) {
+          await vipCol.doc(accessId).update({ status: "expired" });
+          return res.status(403).json({ error: "Este acceso VIP ha expirado por límite de tiempo." });
+        }
+
+        return res.json({
+          success: true,
+          deviceToken: incomingDeviceToken,
+          clientName: accessData.clientName,
+          allowedDepartments: accessData.allowedDepartments,
+          sessionExpiresAt: accessData.sessionExpiresAt,
+          accessId
+        });
+      }
+
+    } catch (err: any) {
+      console.error("Error en login VIP:", err);
+      return res.status(500).json({ error: "Error en el servidor de autenticación VIP: " + err.message });
+    }
+  });
+
+  // 2. VIP Client Session Verification (Validates local localStorage token on reload/polling)
+  app.post("/api/vip/verify-session", async (req, res) => {
+    try {
+      const { deviceToken } = req.body;
+      if (!deviceToken) {
+        return res.json({ valid: false, reason: "no_token" });
+      }
+
+      const tokenHash = hashDeviceToken(deviceToken);
+      const vipCol = firestoreDb.collection("vip_accesses");
+      const snap = await vipCol.where("deviceTokenHash", "==", tokenHash).get();
+
+      if (snap.empty) {
+        return res.json({ valid: false, reason: "invalid_token" });
+      }
+
+      const accessDoc = snap.docs[0];
+      const accessId = accessDoc.id;
+      const accessData = accessDoc.data();
+      const now = Date.now();
+
+      if (accessData.status !== "active") {
+        return res.json({ valid: false, reason: "inactive_status", status: accessData.status });
+      }
+
+      if (new Date(accessData.sessionExpiresAt).getTime() < now) {
+        await vipCol.doc(accessId).update({ status: "expired", updatedAt: new Date().toISOString() });
+        return res.json({ valid: false, reason: "expired", status: "expired" });
+      }
+
+      return res.json({
+        valid: true,
+        accessId,
+        clientName: accessData.clientName,
+        allowedDepartments: accessData.allowedDepartments,
+        sessionExpiresAt: accessData.sessionExpiresAt
+      });
+
+    } catch (err: any) {
+      console.error("Error en verificación de sesión VIP:", err);
+      return res.status(500).json({ error: "Error de servidor: " + err.message });
+    }
+  });
+
+  // 3. VIP Client Behavioral Analytics Logger
+  app.post("/api/vip/analytics/event", async (req, res) => {
+    try {
+      const { deviceToken, eventType, productId, productName, departmentId, durationSeconds, metadata } = req.body;
+      if (!deviceToken || !eventType) {
+        return res.status(400).json({ error: "Parámetros de analíticas insuficientes." });
+      }
+
+      const tokenHash = hashDeviceToken(deviceToken);
+      const snap = await firestoreDb.collection("vip_accesses").where("deviceTokenHash", "==", tokenHash).get();
+
+      if (snap.empty) {
+        return res.status(403).json({ error: "Sesión VIP no autorizada para registrar eventos." });
+      }
+
+      const accessDoc = snap.docs[0];
+      const accessId = accessDoc.id;
+      const accessData = accessDoc.data();
+      const now = Date.now();
+
+      // Auto expire on active check
+      if (new Date(accessData.sessionExpiresAt).getTime() < now && accessData.status === "active") {
+        await firestoreDb.collection("vip_accesses").doc(accessId).update({ status: "expired", updatedAt: new Date().toISOString() });
+        return res.status(403).json({ error: "La sesión VIP ha expirado.", sessionExpired: true });
+      }
+
+      const eventDoc = {
+        accessId,
+        clientName: accessData.clientName,
+        eventType,
+        productId: productId || null,
+        productName: productName || null,
+        departmentId: departmentId || null,
+        timestamp: new Date().toISOString(),
+        durationSeconds: durationSeconds !== undefined ? Number(durationSeconds) : null,
+        metadata: metadata || null
+      };
+
+      await firestoreDb.collection("vip_analytics").add(eventDoc);
+      return res.json({ success: true });
+
+    } catch (err: any) {
+      console.error("Error registrando analítica VIP:", err);
+      return res.status(500).json({ error: "Error registrando analíticas." });
+    }
+  });
+
+  // 4. VIP Client Secure Checkout / Order handler
+  app.post("/api/vip/orders", async (req, res) => {
+    try {
+      const { deviceToken, items, total, whatsappMessage, departmentSummary } = req.body;
+      if (!deviceToken || !items || !Array.isArray(items)) {
+        return res.status(400).json({ error: "Información de pedido incompleta." });
+      }
+
+      const tokenHash = hashDeviceToken(deviceToken);
+      const snap = await firestoreDb.collection("vip_accesses").where("deviceTokenHash", "==", tokenHash).get();
+
+      if (snap.empty) {
+        return res.status(403).json({ error: "No autorizado." });
+      }
+
+      const accessDoc = snap.docs[0];
+      const accessId = accessDoc.id;
+      const accessData = accessDoc.data();
+      const now = Date.now();
+
+      if (new Date(accessData.sessionExpiresAt).getTime() < now) {
+        await firestoreDb.collection("vip_accesses").doc(accessId).update({ status: "expired", updatedAt: new Date().toISOString() });
+        return res.status(403).json({ error: "El pedido no puede completarse porque tu acceso VIP de sesión ya expiró." });
+      }
+
+      // STRICT Server-Side verification of authorized departments!
+      const allowed = accessData.allowedDepartments || [];
+      const unauthorizedItems = items.filter((item: any) => !allowed.includes(item.category));
+      if (unauthorizedItems.length > 0) {
+        return res.status(403).json({
+          error: "Fallo de seguridad: Tu pedido incluye productos de categorías no autorizadas para este PIN de acceso VIP."
+        });
+      }
+
+      const orderId = `vip_ord_${Date.now()}`;
+      const orderDoc = {
+        id: orderId,
+        accessId,
+        clientName: accessData.clientName,
+        items,
+        total: Number(total) || 0,
+        status: "completed",
+        createdAt: new Date().toISOString(),
+        whatsappMessage: whatsappMessage || "",
+        departmentSummary: departmentSummary || "",
+        source: "vip_private_catalog"
+      };
+
+      await firestoreDb.collection("vip_orders").doc(orderId).set(orderDoc);
+
+      // Log order event in analytics
+      await firestoreDb.collection("vip_analytics").add({
+        accessId,
+        clientName: accessData.clientName,
+        eventType: "order_created",
+        productId: null,
+        productName: `Pedido VIP de ${items.length} productos`,
+        timestamp: new Date().toISOString(),
+        metadata: { orderId, total }
+      });
+
+      return res.json({ success: true, orderId });
+
+    } catch (err: any) {
+      console.error("Error al registrar pedido VIP:", err);
+      return res.status(500).json({ error: "Fallo procesando pedido VIP en el backend: " + err.message });
+    }
+  });
+
+  // 5. Admin Panel: Create VIP access config with unhashed verification checks
+  app.post("/api/vip/accesses", requireAdmin, async (req, res) => {
+    try {
+      const { clientName, pin, allowedDepartments, sessionDurationMinutes, notes } = req.body;
+      if (!clientName || !pin || !allowedDepartments || !Array.isArray(allowedDepartments) || allowedDepartments.length === 0) {
+        return res.status(400).json({ error: "Parámetros obligatorios faltantes (Nombre, PIN y Departamentos)." });
+      }
+
+      const cleanPin = pin.trim();
+      if (cleanPin.length < 3 || cleanPin.length > 4 || isNaN(Number(cleanPin))) {
+        return res.status(400).json({ error: "El PIN debe tener exclusivamente entre 3 y 4 dígitos numéricos." });
+      }
+
+      const pinHash = hashPin(cleanPin);
+
+      // Verify duplicate pin check
+      const dupSnap = await firestoreDb.collection("vip_accesses")
+        .where("pinHash", "==", pinHash)
+        .where("status", "==", "active")
+        .get();
+
+      if (!dupSnap.empty) {
+        return res.status(400).json({ error: "Ya existe otro acceso VIP activo con este PIN. Elige otro PIN por seguridad." });
+      }
+
+      const id = `vip_acc_${Date.now()}`;
+      const newAccess = {
+        id,
+        clientName: clientName.trim(),
+        pinHash,
+        pinLastDigits: `****${cleanPin.substring(cleanPin.length - 1)}`,
+        allowedDepartments,
+        sessionDurationMinutes: Number(sessionDurationMinutes) || 30,
+        status: "active",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        createdBy: "admin",
+        firstUsedAt: null,
+        sessionStartedAt: null,
+        sessionExpiresAt: null,
+        deviceTokenHash: null,
+        deviceInfo: null,
+        failedAttempts: 0,
+        maxFailedAttempts: 5,
+        lastAttemptAt: null,
+        notes: notes ? notes.trim() : "",
+        whatsappLastGeneratedAt: ""
+      };
+
+      await firestoreDb.collection("vip_accesses").doc(id).set(newAccess);
+
+      return res.json({
+        ...newAccess,
+        rawPin: cleanPin
+      });
+
+    } catch (err: any) {
+      console.error("Error creando acceso VIP:", err);
+      return res.status(500).json({ error: "Error al guardar acceso VIP en base de datos: " + err.message });
+    }
+  });
+
+  // 6. Admin Panel: List all VIP access records
+  app.get("/api/vip/accesses", requireAdmin, async (req, res) => {
+    try {
+      const snap = await firestoreDb.collection("vip_accesses").orderBy("createdAt", "desc").get();
+      const list = snap.docs.map(doc => doc.data());
+      return res.json(list);
+    } catch (err: any) {
+      console.error("Error listando accesos VIP:", err);
+      return res.status(500).json({ error: "Error de base de datos al listar accesos VIP: " + err.message });
+    }
+  });
+
+  // 7. Admin Panel: Revoke an active VIP access
+  app.post("/api/vip/accesses/:id/revoke", requireAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const vipCol = firestoreDb.collection("vip_accesses");
+      const docRef = vipCol.doc(id);
+      const docSnap = await docRef.get();
+
+      if (!docSnap.exists) {
+        return res.status(404).json({ error: "Acceso VIP no encontrado." });
+      }
+
+      await docRef.update({
+        status: "revoked",
+        updatedAt: new Date().toISOString()
+      });
+
+      // Log event
+      await firestoreDb.collection("vip_analytics").add({
+        accessId: id,
+        clientName: docSnap.data()?.clientName || "Cliente",
+        eventType: "session_end",
+        timestamp: new Date().toISOString(),
+        metadata: { reason: "revoked_by_admin" }
+      });
+
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.error("Error revocando acceso VIP:", err);
+      return res.status(500).json({ error: "Error al revocar acceso VIP: " + err.message });
+    }
+  });
+
+  // 8. Admin Panel: Delete a VIP access record
+  app.delete("/api/vip/accesses/:id", requireAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      await firestoreDb.collection("vip_accesses").doc(id).delete();
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.error("Error eliminando acceso VIP:", err);
+      return res.status(500).json({ error: "Error de base de datos al eliminar acceso VIP: " + err.message });
+    }
+  });
+
+  // 9. Admin Panel: Load client specific session analytics & orders
+  app.get("/api/vip/analytics/:accessId", requireAdmin, async (req, res) => {
+    try {
+      const { accessId } = req.params;
+      
+      const eventsSnap = await firestoreDb.collection("vip_analytics")
+        .where("accessId", "==", accessId)
+        .orderBy("timestamp", "asc")
+        .get();
+      const events = eventsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+      const ordersSnap = await firestoreDb.collection("vip_orders")
+        .where("accessId", "==", accessId)
+        .orderBy("createdAt", "desc")
+        .get();
+      const orders = ordersSnap.docs.map(doc => doc.data());
+
+      return res.json({ events, orders });
+    } catch (err: any) {
+      console.error("Error cargando analíticas VIP:", err);
+      return res.status(500).json({ error: "Fallo cargando analíticas de VIP: " + err.message });
+    }
+  });
+
   // --- ENDPOINT DE DIAGNÓSTICO DE LA NUBE (Google Cloud Run / Firestore / GCS) ---
   app.get("/api/diagnostics", async (req, res) => {
     const diagnostics: any = {
