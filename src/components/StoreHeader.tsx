@@ -17,6 +17,7 @@ interface StoreHeaderProps {
   onOpenLocation: () => void;
   onOpenShare: () => void;
   onOpenLogin?: () => void;
+  onOpenVip?: () => void;
 }
 
 export default function StoreHeader({
@@ -29,6 +30,7 @@ export default function StoreHeader({
   onOpenLocation,
   onOpenShare,
   onOpenLogin,
+  onOpenVip,
 }: StoreHeaderProps) {
   const isCompact = storeConfig.bannerStyle === "compact";
 
@@ -69,6 +71,13 @@ export default function StoreHeader({
                 <QrCode size={11} className="text-amber-500 shrink-0" />
                 <span>Compartir QR</span>
               </button>
+              <button 
+                onClick={onOpenVip}
+                className="hover:text-amber-600 transition-colors flex items-center gap-1.5 text-left select-none font-bold text-amber-600 bg-amber-500/5 px-2 py-0.5 rounded-md border border-amber-500/20"
+              >
+                <Sparkles size={11} className="text-amber-500 shrink-0" />
+                <span>Acceso VIP</span>
+              </button>
             </div>
           </div>
         )}
@@ -102,18 +111,29 @@ export default function StoreHeader({
             </div>
           </div>
 
-          {/* Search Bar Input */}
-          <div id="search-bar-container" className="relative w-full md:max-w-md">
-            <span className="absolute left-3.5 top-3 text-slate-400">
-              <Search size={15} />
-            </span>
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => onSearchChange(e.target.value)}
-              placeholder="Buscar por nombre, SKU o marca..."
-              className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl text-xs font-medium focus:outline-hidden focus:ring-4 focus:ring-amber-500/10 focus:border-amber-500 transition-all bg-slate-50/70 hover:bg-slate-50/90 text-slate-800 placeholder:text-slate-400"
-            />
+          {/* Search Bar & VIP Access Button */}
+          <div className="flex items-center gap-2 w-full md:max-w-lg">
+            <div id="search-bar-container" className="relative flex-1">
+              <span className="absolute left-3.5 top-3 text-slate-400">
+                <Search size={15} />
+              </span>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => onSearchChange(e.target.value)}
+                placeholder="Buscar por nombre, SKU o marca..."
+                className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl text-xs font-medium focus:outline-hidden focus:ring-4 focus:ring-amber-500/10 focus:border-amber-500 transition-all bg-slate-50/70 hover:bg-slate-50/90 text-slate-800 placeholder:text-slate-400"
+              />
+            </div>
+            
+            <button
+              onClick={onOpenVip}
+              className="bg-amber-500 hover:bg-amber-600 text-slate-950 px-3.5 py-2.5 rounded-xl font-bold text-xs flex items-center gap-1 cursor-pointer transition-colors shrink-0 shadow-sm shadow-amber-500/10"
+              title="Portal VIP Privado"
+            >
+              <Sparkles size={14} className="text-slate-950" />
+              <span className="hidden sm:inline">Portal VIP</span>
+            </button>
           </div>
         </div>
 

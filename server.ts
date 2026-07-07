@@ -1029,16 +1029,16 @@ async function startServer() {
   // 4. VIP Client Secure Checkout / Order handler
   app.post("/api/vip/orders", async (req, res) => {
     try {
-      const { deviceToken, items, total, whatsappMessage, departmentSummary } = req.body;
-      if (!deviceToken || !items || !Array.isArray(items)) {
-        return res.status(400).json({ error: "Información de pedido incompleta." });
+      const { deviceToken, items, customerNote, whatsappMessage, departmentSummary } = req.body;
+      if (!deviceToken || !items || !Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ error: "Información de pedido incompleta o vacía." });
       }
 
       const tokenHash = hashDeviceToken(deviceToken);
       const snap = await firestoreDb.collection("vip_accesses").where("deviceTokenHash", "==", tokenHash).get();
 
       if (snap.empty) {
-        return res.status(403).json({ error: "No autorizado." });
+        return res.status(403).json({ error: "Acceso VIP no autorizado." });
       }
 
       const accessDoc = snap.docs[0];
@@ -1051,12 +1051,67 @@ async function startServer() {
         return res.status(403).json({ error: "El pedido no puede completarse porque tu acceso VIP de sesión ya expiró." });
       }
 
-      // STRICT Server-Side verification of authorized departments!
+      // IDEMPOTENCY / DOUBLE-CLICK PROTECTION (15 seconds)
+      const recentOrdersSnap = await firestoreDb.collection("vip_orders")
+        .where("accessId", "==", accessId)
+        .orderBy("createdAt", "desc")
+        .limit(1)
+        .get();
+
+      if (!recentOrdersSnap.empty) {
+        const lastOrder = recentOrdersSnap.docs[0].data();
+        const lastOrderTime = new Date(lastOrder.createdAt).getTime();
+        if (now - lastOrderTime < 15000) {
+          return res.status(429).json({ error: "Pedido duplicado detectado. Por favor, espera unos segundos entre envíos." });
+        }
+      }
+
+      // STRICT Server-Side verification and lookup of authorized products!
       const allowed = accessData.allowedDepartments || [];
-      const unauthorizedItems = items.filter((item: any) => !allowed.includes(item.category));
-      if (unauthorizedItems.length > 0) {
-        return res.status(403).json({
-          error: "Fallo de seguridad: Tu pedido incluye productos de categorías no autorizadas para este PIN de acceso VIP."
+      const resolvedItems = [];
+      let calculatedSubtotal = 0;
+
+      for (const item of items) {
+        const productId = item.productId;
+        const requestedQty = Number(item.quantity);
+
+        if (!productId || isNaN(requestedQty) || requestedQty <= 0) {
+          return res.status(400).json({ error: "Cada artículo del pedido debe tener un ID de producto y cantidad válidos." });
+        }
+
+        // Fetch real product from database
+        const prodDoc = await firestoreDb.collection("products").doc(productId).get();
+        if (!prodDoc.exists) {
+          return res.status(400).json({ error: `El producto solicitado no existe en la base de datos.` });
+        }
+
+        const prodData = prodDoc.data()!;
+        
+        // Category auth check
+        if (!allowed.includes(prodData.category)) {
+          return res.status(403).json({
+            error: `Fallo de seguridad: No estás autorizado para ordenar productos de la categoría '${prodData.category}'.`
+          });
+        }
+
+        // Available check
+        if (prodData.isAvailable === false) {
+          return res.status(400).json({ error: `El producto '${prodData.name}' no se encuentra disponible actualmente.` });
+        }
+
+        const realPrice = Number(prodData.retailPrice) || 0;
+        const itemCost = realPrice * requestedQty;
+        calculatedSubtotal += itemCost;
+
+        resolvedItems.push({
+          productId,
+          name: prodData.name,
+          sku: prodData.sku || "N/A",
+          price: realPrice,
+          quantity: requestedQty,
+          category: prodData.category,
+          observation: item.observation ? String(item.observation).trim() : "",
+          image: (prodData.images && prodData.images.length > 0) ? prodData.images[0] : null
         });
       }
 
@@ -1065,13 +1120,28 @@ async function startServer() {
         id: orderId,
         accessId,
         clientName: accessData.clientName,
-        items,
-        total: Number(total) || 0,
-        status: "completed",
+        items: resolvedItems,
+        total: calculatedSubtotal,
+        status: "pendiente", // Initial status is pending
+        customerNote: customerNote ? String(customerNote).trim() : "",
         createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
         whatsappMessage: whatsappMessage || "",
         departmentSummary: departmentSummary || "",
-        source: "vip_private_catalog"
+        source: "vip_private_catalog",
+        // Additional telemetry & metadata
+        deviceInfo: {
+          platform: accessData.deviceInfo?.platform || "web",
+          screenResolution: accessData.deviceInfo?.screenResolution || "unknown"
+        },
+        quotedItems: null,
+        finalTotal: null,
+        adminNotes: "",
+        quotedAt: null,
+        quotedBy: null,
+        statusHistory: [
+          { status: "pendiente", updatedAt: new Date().toISOString(), note: "Pedido registrado por el cliente." }
+        ]
       };
 
       await firestoreDb.collection("vip_orders").doc(orderId).set(orderDoc);
@@ -1080,11 +1150,11 @@ async function startServer() {
       await firestoreDb.collection("vip_analytics").add({
         accessId,
         clientName: accessData.clientName,
-        eventType: "order_created",
+        eventType: "submit_order",
         productId: null,
-        productName: `Pedido VIP de ${items.length} productos`,
+        productName: `Pedido VIP enviado: ${resolvedItems.length} productos`,
         timestamp: new Date().toISOString(),
-        metadata: { orderId, total }
+        metadata: { orderId, total: calculatedSubtotal }
       });
 
       return res.json({ success: true, orderId });
@@ -1092,6 +1162,117 @@ async function startServer() {
     } catch (err: any) {
       console.error("Error al registrar pedido VIP:", err);
       return res.status(500).json({ error: "Fallo procesando pedido VIP en el backend: " + err.message });
+    }
+  });
+
+  // Client-side: View active session order history
+  app.get("/api/vip/my-orders", async (req, res) => {
+    try {
+      const deviceToken = req.query.deviceToken || req.headers["x-vip-device-token"];
+      if (!deviceToken) {
+        return res.status(400).json({ error: "Token de dispositivo VIP faltante." });
+      }
+
+      const tokenHash = hashDeviceToken(deviceToken as string);
+      const snap = await firestoreDb.collection("vip_accesses").where("deviceTokenHash", "==", tokenHash).get();
+
+      if (snap.empty) {
+        return res.json([]);
+      }
+
+      const accessDoc = snap.docs[0];
+      const accessId = accessDoc.id;
+      const accessData = accessDoc.data();
+      const now = Date.now();
+
+      // Ensure session has not expired
+      if (new Date(accessData.sessionExpiresAt).getTime() < now) {
+        await firestoreDb.collection("vip_accesses").doc(accessId).update({ status: "expired", updatedAt: new Date().toISOString() });
+        return res.status(403).json({ error: "Sesión expirada." });
+      }
+
+      const ordersSnap = await firestoreDb.collection("vip_orders")
+        .where("accessId", "==", accessId)
+        .orderBy("createdAt", "desc")
+        .get();
+
+      const orders = ordersSnap.docs.map(doc => doc.data());
+      return res.json(orders);
+
+    } catch (err: any) {
+      console.error("Error al obtener pedidos de cliente VIP:", err);
+      return res.status(500).json({ error: "Error en servidor al cargar pedidos." });
+    }
+  });
+
+  // Admin-side: List all VIP orders
+  app.get("/api/vip/orders", requireAdmin, async (req, res) => {
+    try {
+      const snap = await firestoreDb.collection("vip_orders").orderBy("createdAt", "desc").get();
+      const orders = snap.docs.map(doc => doc.data());
+      return res.json(orders);
+    } catch (err: any) {
+      console.error("Error al listar pedidos VIP para administración:", err);
+      return res.status(500).json({ error: "Error de base de datos al listar pedidos VIP." });
+    }
+  });
+
+  // Admin-side: Update VIP order status and quotation
+  app.put("/api/vip/orders/:orderId", requireAdmin, async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const { status, adminNotes, quotedItems, finalTotal } = req.body;
+
+      const orderRef = firestoreDb.collection("vip_orders").doc(orderId);
+      const orderSnap = await orderRef.get();
+
+      if (!orderSnap.exists) {
+        return res.status(404).json({ error: "Pedido VIP no encontrado." });
+      }
+
+      const orderData = orderSnap.data()!;
+      const currentStatusHistory = orderData.statusHistory || [];
+      const updatedStatusHistory = [
+        ...currentStatusHistory,
+        {
+          status,
+          updatedAt: new Date().toISOString(),
+          note: `Estado cambiado por administrador. Nota: ${adminNotes || "Ninguna"}`
+        }
+      ];
+
+      const updatePayload: any = {
+        status,
+        adminNotes: adminNotes !== undefined ? adminNotes : (orderData.adminNotes || ""),
+        updatedAt: new Date().toISOString(),
+        statusHistory: updatedStatusHistory
+      };
+
+      if (quotedItems !== undefined) {
+        updatePayload.quotedItems = quotedItems;
+        updatePayload.finalTotal = Number(finalTotal) || 0;
+        updatePayload.quotedAt = new Date().toISOString();
+        updatePayload.quotedBy = "admin";
+      }
+
+      await orderRef.update(updatePayload);
+
+      // Register log in analytics
+      await firestoreDb.collection("vip_analytics").add({
+        accessId: orderData.accessId,
+        clientName: orderData.clientName,
+        eventType: "admin_status_changed",
+        productId: null,
+        productName: `Pedido ${orderId} actualizado a '${status}'`,
+        timestamp: new Date().toISOString(),
+        metadata: { orderId, status, finalTotal }
+      });
+
+      return res.json({ success: true });
+
+    } catch (err: any) {
+      console.error("Error al actualizar pedido VIP:", err);
+      return res.status(500).json({ error: "Error de servidor al actualizar pedido VIP." });
     }
   });
 

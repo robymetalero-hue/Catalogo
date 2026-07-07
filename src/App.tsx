@@ -1217,6 +1217,10 @@ export default function App() {
             onSearchChange={setSearchQuery}
             onOpenLocation={handleOpenGoogleMaps}
             onOpenShare={() => setIsShareOpen(true)}
+            onOpenVip={() => {
+              window.history.pushState({}, "", "/vip");
+              setIsVipView(true);
+            }}
           />
 
           <main className="flex-grow max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8 animate-fadeIn font-sans">
