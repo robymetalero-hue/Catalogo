@@ -152,7 +152,9 @@
         "sessionDurationMinutes": { "type": "number" },
         "status": { "type": "string" },
         "createdAt": { "type": "string" },
-        "updatedAt": { "type": "string" }
+        "updatedAt": { "type": "string" },
+        "clientCode": { "type": "string" },
+        "phoneNumber": { "type": "string" }
       }
     },
     "VipAnalytics": {
@@ -173,7 +175,14 @@
         "accessId": { "type": "string" },
         "clientName": { "type": "string" },
         "total": { "type": "number" },
-        "createdAt": { "type": "string" }
+        "createdAt": { "type": "string" },
+        "paymentStatus": { "type": "string" },
+        "paymentMethod": { "type": "string" },
+        "paymentReference": { "type": "string" },
+        "deliveryStatus": { "type": "string" },
+        "deliveryTrackingUrl": { "type": "string" },
+        "deliveryNotes": { "type": "string" },
+        "chat": { "type": "array" }
       }
     }
   },

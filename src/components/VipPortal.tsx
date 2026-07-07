@@ -28,6 +28,8 @@ export interface VipCartItem {
 export default function VipPortal({ products, storeConfig, onBackToPublic }: VipPortalProps) {
   // Session / Auth States
   const [pin, setPin] = useState("");
+  const [clientIdentifier, setClientIdentifier] = useState("");
+  const [catalogAccessAllowed, setCatalogAccessAllowed] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [deviceToken, setDeviceToken] = useState(() => localStorage.getItem("vip_device_token") || "");
   const [clientName, setClientName] = useState("");
@@ -37,6 +39,15 @@ export default function VipPortal({ products, storeConfig, onBackToPublic }: Vip
 
   // UI Navigation States
   const [portalTab, setPortalTab] = useState<"catalog" | "orders">("catalog");
+
+  // Interaction States
+  const [activeChatOrderId, setActiveChatOrderId] = useState<string | null>(null);
+  const [chatText, setChatText] = useState("");
+  const [sendingChat, setSendingChat] = useState(false);
+  const [reportingPaymentOrderId, setReportingPaymentOrderId] = useState<string | null>(null);
+  const [reportedPaymentMethod, setReportedPaymentMethod] = useState("transferencia");
+  const [reportedPaymentRef, setReportedPaymentRef] = useState("");
+  const [submittingPayment, setSubmittingPayment] = useState(false);
 
   // UI States
   const [loading, setLoading] = useState(false);
@@ -211,6 +222,10 @@ export default function VipPortal({ products, storeConfig, onBackToPublic }: Vip
         setAllowedDepartments(data.allowedDepartments);
         setSessionExpiresAt(data.sessionExpiresAt);
         setAccessId(data.accessId);
+        setCatalogAccessAllowed(data.catalogAccessAllowed !== false);
+        if (data.catalogAccessAllowed === false) {
+          setPortalTab("orders");
+        }
         setIsAuthenticated(true);
         logAnalyticsEvent("session_verify_ok");
         fetchMyOrders();
@@ -256,6 +271,7 @@ export default function VipPortal({ products, storeConfig, onBackToPublic }: Vip
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          identifier: clientIdentifier.trim() || undefined,
           pin: pin.trim(),
           deviceToken: deviceToken || null,
           deviceInfo: {
@@ -268,7 +284,7 @@ export default function VipPortal({ products, storeConfig, onBackToPublic }: Vip
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.error || "Código PIN inválido.");
+        throw new Error(data.error || "Código PIN o datos de cliente inválidos.");
       }
 
       // Success
@@ -278,6 +294,12 @@ export default function VipPortal({ products, storeConfig, onBackToPublic }: Vip
       setAllowedDepartments(data.allowedDepartments);
       setSessionExpiresAt(data.sessionExpiresAt);
       setAccessId(data.accessId);
+      setCatalogAccessAllowed(data.catalogAccessAllowed !== false);
+      if (data.catalogAccessAllowed === false) {
+        setPortalTab("orders");
+      } else {
+        setPortalTab("catalog");
+      }
       setIsAuthenticated(true);
       setPin("");
       setError(null);
@@ -304,6 +326,7 @@ export default function VipPortal({ products, storeConfig, onBackToPublic }: Vip
     setAllowedDepartments([]);
     setSessionExpiresAt(null);
     setAccessId(null);
+    setCatalogAccessAllowed(true);
     setCart([]);
     setCustomerNote("");
     setPortalTab("catalog");
@@ -322,10 +345,85 @@ export default function VipPortal({ products, storeConfig, onBackToPublic }: Vip
     setAllowedDepartments([]);
     setSessionExpiresAt(null);
     setAccessId(null);
+    setCatalogAccessAllowed(true);
     setCart([]);
     setCustomerNote("");
     setPortalTab("catalog");
-    setError("Tu sesión VIP de dispositivo único ha expirado. Por seguridad, el carrito y los datos temporales han sido eliminados.");
+    setError("Tu sesión VIP de dispositivo único ha expirado. Por seguridad, el catálogo de compras se ha cerrado, pero puedes volver a ingresar con tus datos.");
+  };
+
+  const sendChatMessage = async (orderId: string) => {
+    if (!chatText.trim()) return;
+    setSendingChat(true);
+    try {
+      const res = await fetch(`/api/vip/orders/${orderId}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          deviceToken,
+          text: chatText.trim()
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        // Append message to local state
+        setMyOrders(prev => prev.map(o => {
+          if (o.id === orderId) {
+            return {
+              ...o,
+              chat: [...(o.chat || []), data.message]
+            };
+          }
+          return o;
+        }));
+        setChatText("");
+      } else {
+        const err = await res.json();
+        alert(err.error || "No se pudo enviar el mensaje.");
+      }
+    } catch (err: any) {
+      console.error(err);
+    } finally {
+      setSendingChat(false);
+    }
+  };
+
+  const submitPaymentReport = async (orderId: string) => {
+    if (!reportedPaymentRef.trim()) return;
+    setSubmittingPayment(true);
+    try {
+      const res = await fetch(`/api/vip/orders/${orderId}/report-payment`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          deviceToken,
+          paymentMethod: reportedPaymentMethod,
+          paymentReference: reportedPaymentRef.trim()
+        })
+      });
+      if (res.ok) {
+        setMyOrders(prev => prev.map(o => {
+          if (o.id === orderId) {
+            return {
+              ...o,
+              paymentStatus: "verificación_pendiente",
+              paymentMethod: reportedPaymentMethod,
+              paymentReference: reportedPaymentRef.trim()
+            };
+          }
+          return o;
+        }));
+        setReportingPaymentOrderId(null);
+        setReportedPaymentRef("");
+      } else {
+        const err = await res.json();
+        alert(err.error || "No se pudo registrar el reporte de pago.");
+      }
+    } catch (err: any) {
+      console.error(err);
+    } finally {
+      setSubmittingPayment(false);
+    }
   };
 
   // Behavioral Analytics Logging helper
@@ -602,17 +700,19 @@ _Enviado de forma segura e interna_ 🛡️`;
         <div className="flex items-center gap-2">
           {isAuthenticated && (
             <>
-              <button
-                onClick={() => setPortalTab(portalTab === "catalog" ? "orders" : "catalog")}
-                className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1 ${
-                  portalTab === "orders" 
-                    ? "bg-amber-500 text-slate-950" 
-                    : "bg-slate-800 hover:bg-slate-750 text-slate-300"
-                }`}
-              >
-                <FileText size={13} />
-                <span>{portalTab === "orders" ? "Ver Productos" : `Mis Pedidos (${myOrders.length})`}</span>
-              </button>
+              {catalogAccessAllowed && (
+                <button
+                  onClick={() => setPortalTab(portalTab === "catalog" ? "orders" : "catalog")}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1 ${
+                    portalTab === "orders" 
+                      ? "bg-amber-500 text-slate-950" 
+                      : "bg-slate-800 hover:bg-slate-750 text-slate-300"
+                  }`}
+                >
+                  <FileText size={13} />
+                  <span>{portalTab === "orders" ? "Ver Productos" : `Mis Pedidos (${myOrders.length})`}</span>
+                </button>
+              )}
 
               <button 
                 onClick={handleLogout}
@@ -637,7 +737,7 @@ _Enviado de forma segura e interna_ 🛡️`;
               </div>
               <h2 className="text-xl font-extrabold text-slate-100 tracking-tight">Acceso Privado Exclusivo</h2>
               <p className="text-xs text-slate-400 leading-relaxed max-w-sm mx-auto">
-                Introduce el PIN de seguridad de 3 o 4 dígitos de tu sesión privada para visualizar y ordenar del catálogo exclusivo.
+                Ingresa tus datos de cliente y PIN VIP asignado para acceder a tu catálogo o ver tus pedidos.
               </p>
             </div>
 
@@ -648,35 +748,50 @@ _Enviado de forma segura e interna_ 🛡️`;
               </div>
             )}
 
-            <form onSubmit={handleLogin} className="space-y-4">
-              <div>
-                <input
-                  type="text"
-                  pattern="[0-9]*"
-                  inputMode="numeric"
-                  required
-                  placeholder="Introduce tu PIN VIP"
-                  maxLength={4}
-                  value={pin}
-                  onChange={e => setPin(e.target.value.replace(/\D/g, ""))}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-2xl py-3 px-4 text-center font-mono text-lg font-black text-amber-400 tracking-widest focus:outline-none focus:border-amber-500 transition-all placeholder:text-slate-700"
-                />
+            <form onSubmit={handleLogin} className="space-y-4 text-left">
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-[10px] uppercase font-extrabold text-slate-500 tracking-wider mb-1">Nombre, Celular o Código *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ej: Juan Pérez, 099123456, CLI-001"
+                    value={clientIdentifier}
+                    onChange={e => setClientIdentifier(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-2xl py-2.5 px-4 text-xs text-slate-100 focus:outline-none focus:border-amber-500 transition-all placeholder:text-slate-700"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] uppercase font-extrabold text-slate-500 tracking-wider mb-1 text-left">PIN VIP de Seguridad *</label>
+                  <input
+                    type="password"
+                    pattern="[0-9]*"
+                    inputMode="numeric"
+                    required
+                    placeholder="••••"
+                    maxLength={4}
+                    value={pin}
+                    onChange={e => setPin(e.target.value.replace(/\D/g, ""))}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-2xl py-3 px-4 text-center font-mono text-lg font-black text-amber-400 tracking-widest focus:outline-none focus:border-amber-500 transition-all placeholder:text-slate-700"
+                  />
+                </div>
               </div>
 
               <button
                 type="submit"
-                disabled={loading || !pin}
-                className="w-full bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold text-xs py-3 rounded-2xl transition-all shadow-lg shadow-amber-500/10 flex items-center justify-center gap-1.5 uppercase tracking-wider cursor-pointer"
+                disabled={loading || !pin || !clientIdentifier.trim()}
+                className="w-full bg-amber-500 hover:bg-amber-600 disabled:bg-slate-800 disabled:text-slate-600 text-slate-950 font-extrabold text-xs py-3 rounded-2xl transition-all shadow-lg shadow-amber-500/10 flex items-center justify-center gap-1.5 uppercase tracking-wider cursor-pointer"
               >
                 {loading ? (
                   <>
                     <RefreshCw size={14} className="animate-spin" />
-                    <span>Verificando PIN...</span>
+                    <span>Verificando Acceso...</span>
                   </>
                 ) : (
                   <>
                     <Lock size={13} />
-                    <span>Desbloquear Catálogo VIP</span>
+                    <span>Acceder al Portal VIP</span>
                   </>
                 )}
               </button>
@@ -689,7 +804,19 @@ _Enviado de forma segura e interna_ 🛡️`;
         ) : portalTab === "orders" ? (
           /* VIP USER SUBMITTED ORDERS HISTORY TAB */
           <div className="w-full space-y-6 animate-fadeIn relative z-10 max-w-3xl">
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 md:p-6">
+            {!catalogAccessAllowed && (
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-3xl p-5 flex gap-4 items-start text-left">
+                <AlertCircle className="text-amber-400 shrink-0 mt-0.5" size={20} />
+                <div className="space-y-1">
+                  <h4 className="text-sm font-black text-amber-400 uppercase tracking-wider">Período de Navegación del Catálogo Finalizado</h4>
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    Tu tiempo autorizado para visualizar y realizar compras en el Catálogo VIP ha expirado. Conservas acceso exclusivo a este portal de seguimiento para consultar tu historial, realizar pagos y chatear directamente con soporte.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 md:p-6 text-left">
               <h3 className="text-lg font-black flex items-center gap-1.5 text-slate-100">
                 <FileText className="text-amber-400" size={18} />
                 <span>Historial de Pedidos VIP de esta Sesión</span>
@@ -705,7 +832,7 @@ _Enviado de forma segura e interna_ 🛡️`;
                 <p className="text-xs text-slate-500 mt-2">Cargando pedidos...</p>
               </div>
             ) : myOrders.length === 0 ? (
-              <div className="py-20 text-center border border-slate-800 border-dashed rounded-3xl space-y-2">
+              <div className="py-20 text-center border border-slate-800 border-dashed rounded-3xl space-y-2 bg-slate-900/20">
                 <FileText size={32} className="text-slate-700 mx-auto" />
                 <h4 className="font-bold text-sm text-slate-400">No has enviado pedidos todavía</h4>
                 <p className="text-xs text-slate-500 max-w-xs mx-auto">
@@ -713,7 +840,7 @@ _Enviado de forma segura e interna_ 🛡️`;
                 </p>
               </div>
             ) : (
-              <div className="space-y-4">
+              <div className="space-y-4 text-left">
                 {myOrders.map((order: any) => (
                   <div key={order.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 md:p-5 space-y-4">
                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-800/60 pb-3">
@@ -751,7 +878,7 @@ _Enviado de forma segura e interna_ 🛡️`;
                               <div className="flex items-center gap-2 text-[10px] text-slate-500 font-mono mt-0.5">
                                 <span>Cant: {item.quantity}</span>
                                 <span>•</span>
-                                <span>Price: ${item.price?.toLocaleString()}</span>
+                                <span>Precio: ${(item.price || 0).toLocaleString()}</span>
                               </div>
                               {item.observation && (
                                 <p className="text-[9px] text-amber-400/80 bg-amber-500/5 px-1.5 py-0.5 rounded-md mt-1 truncate">
@@ -794,7 +921,7 @@ _Enviado de forma segura e interna_ 🛡️`;
                               {order.quotedItems.map((q: any, i: number) => (
                                 <div key={i} className="flex justify-between items-center text-xs bg-slate-950/40 px-3 py-1.5 rounded-lg border border-slate-800/50">
                                   <span className="text-slate-300">{q.name} (x{q.quantity})</span>
-                                  <span className="font-bold text-slate-200">${q.price?.toLocaleString()}</span>
+                                  <span className="font-bold text-slate-200">${(q.price || 0).toLocaleString()}</span>
                                 </div>
                               ))}
                             </div>
@@ -813,6 +940,193 @@ _Enviado de forma segura e interna_ 🛡️`;
                         <p className="text-[10px] text-slate-500 italic">Esperando cotización o confirmación del administrador...</p>
                       </div>
                     )}
+
+                    {/* INTERACTIVE DELIVERY TRACKING SECTION */}
+                    <div className="bg-slate-950 border border-slate-850/60 rounded-xl p-3.5 space-y-2">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Estado del Envío / Entrega:</span>
+                        <span className={`px-2.5 py-0.5 rounded text-[9px] font-black uppercase ${
+                          order.deliveryStatus === "entregado" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
+                          order.deliveryStatus === "despachado" ? "bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse" :
+                          "bg-blue-500/10 text-blue-400 border border-blue-500/20"
+                        }`}>
+                          {order.deliveryStatus || "En preparación"}
+                        </span>
+                      </div>
+
+                      {order.deliveryTrackingUrl && (
+                        <a
+                          href={order.deliveryTrackingUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1.5 text-[10px] font-bold text-amber-400 hover:text-amber-300 transition-colors bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-800"
+                        >
+                          <ExternalLink size={12} />
+                          <span>Seguir Envío Online 🚚</span>
+                        </a>
+                      )}
+
+                      {order.deliveryNotes && (
+                        <div className="text-xs text-slate-400 bg-slate-900/50 p-2.5 rounded-lg border border-slate-900/60 leading-relaxed">
+                          {order.deliveryNotes}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* INTERACTIVE PAYMENT REPORTING SECTION */}
+                    <div className="bg-slate-950 border border-slate-850/60 rounded-xl p-3.5 space-y-2">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Estado del Pago:</span>
+                        <span className={`px-2.5 py-0.5 rounded text-[9px] font-black uppercase ${
+                          order.paymentStatus === "pagado" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
+                          order.paymentStatus === "verificación_pendiente" ? "bg-amber-500/10 text-amber-400 border border-amber-500/20" :
+                          order.paymentStatus === "parcial" ? "bg-blue-500/10 text-blue-400 border border-blue-500/20" :
+                          "bg-red-500/10 text-red-400 border border-red-500/20"
+                        }`}>
+                          {order.paymentStatus === "verificación_pendiente" ? "Verificación Pendiente" : (order.paymentStatus || "pendiente")}
+                        </span>
+                      </div>
+
+                      {order.paymentMethod && (
+                        <div className="text-xs text-slate-400 bg-slate-900/40 p-2.5 rounded-lg flex justify-between items-center border border-slate-900/50">
+                          <span>Método: <strong className="text-slate-200 capitalize">{order.paymentMethod}</strong></span>
+                          {order.paymentReference && <span className="font-mono text-[11px] text-slate-400">Ref: {order.paymentReference}</span>}
+                        </div>
+                      )}
+
+                      {/* Client payment input triggers */}
+                      {(!order.paymentStatus || order.paymentStatus === "pendiente") && (
+                        <div>
+                          {reportingPaymentOrderId === order.id ? (
+                            <div className="bg-slate-900 border border-slate-800 p-3 rounded-xl mt-2 space-y-2.5">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                <div>
+                                  <label className="block text-[9px] font-extrabold text-slate-500 uppercase tracking-wider mb-1">Método de Pago</label>
+                                  <select
+                                    value={reportedPaymentMethod}
+                                    onChange={e => setReportedPaymentMethod(e.target.value)}
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-slate-300 focus:outline-none focus:border-amber-500"
+                                  >
+                                    <option value="transferencia">Transferencia Bancaria</option>
+                                    <option value="deposito">Depósito Banco</option>
+                                    <option value="efectivo">Efectivo contra entrega</option>
+                                    <option value="otro">Otro</option>
+                                  </select>
+                                </div>
+                                <div>
+                                  <label className="block text-[9px] font-extrabold text-slate-500 uppercase tracking-wider mb-1">Ref / Transacción *</label>
+                                  <input
+                                    type="text"
+                                    required
+                                    placeholder="Nº Referencia o Código de Pago"
+                                    value={reportedPaymentRef}
+                                    onChange={e => setReportedPaymentRef(e.target.value)}
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-slate-300 focus:outline-none focus:border-amber-500"
+                                  />
+                                </div>
+                              </div>
+                              <div className="flex gap-2 justify-end pt-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setReportingPaymentOrderId(null)}
+                                  className="text-[10px] text-slate-400 hover:text-white px-2 py-1 rounded font-bold"
+                                >
+                                  Cancelar
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={submittingPayment || !reportedPaymentRef.trim()}
+                                  onClick={() => submitPaymentReport(order.id)}
+                                  className="bg-amber-500 hover:bg-amber-600 disabled:bg-slate-800 disabled:text-slate-600 text-slate-950 text-[10px] font-black px-3 py-1.5 rounded-xl uppercase tracking-wider transition-colors"
+                                >
+                                  {submittingPayment ? "Registrando..." : "Registrar Reporte"}
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                setReportingPaymentOrderId(order.id);
+                                setReportedPaymentRef("");
+                              }}
+                              className="w-full bg-slate-800 hover:bg-slate-750 text-slate-300 border border-slate-700/50 text-[10px] font-extrabold py-2 rounded-xl transition-all uppercase tracking-wider"
+                            >
+                              💳 Reportar Pago / Transferencia Realizada
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* INTERACTIVE CHAT SUPPORT SYSTEM */}
+                    <div className="bg-slate-950 border border-slate-850/60 rounded-xl overflow-hidden">
+                      <button
+                        onClick={() => setActiveChatOrderId(activeChatOrderId === order.id ? null : order.id)}
+                        className="w-full flex justify-between items-center p-3 text-[11px] font-extrabold text-slate-300 hover:bg-slate-900 transition-colors border-b border-slate-900"
+                      >
+                        <span className="flex items-center gap-1.5">
+                          <Send size={12} className="text-amber-500" />
+                          <span>Chat y Mensajería de Soporte ({(order.chat || []).length})</span>
+                        </span>
+                        <span>{activeChatOrderId === order.id ? "Ocultar ▲" : "Escribir o Ver ▼"}</span>
+                      </button>
+
+                      {activeChatOrderId === order.id && (
+                        <div className="p-3 space-y-3 bg-slate-950/40">
+                          {/* Messages Bubbles list */}
+                          <div className="max-h-52 overflow-y-auto space-y-2.5 p-1">
+                            {(!order.chat || order.chat.length === 0) ? (
+                              <p className="text-[10px] text-slate-600 text-center py-4 italic">No hay mensajes. Envía una consulta de soporte o aclaración sobre este pedido.</p>
+                            ) : (
+                              order.chat.map((msg: any, mIdx: number) => {
+                                const isAdmin = msg.sender === "admin";
+                                return (
+                                  <div key={mIdx} className={`flex ${isAdmin ? "justify-start" : "justify-end"}`}>
+                                    <div className={`max-w-[85%] rounded-2xl p-2.5 text-xs ${
+                                      isAdmin 
+                                        ? "bg-slate-800 text-slate-200 rounded-tl-none" 
+                                        : "bg-amber-500/10 border border-amber-500/20 text-slate-100 rounded-tr-none"
+                                    }`}>
+                                      <span className="block text-[8px] font-extrabold uppercase tracking-wider mb-0.5 text-slate-500">
+                                        {isAdmin ? "Asesor VIP" : "Cliente (Tú)"}
+                                      </span>
+                                      <p className="leading-relaxed whitespace-pre-wrap">{msg.text}</p>
+                                      <span className="block text-[8px] text-slate-600 text-right mt-1 font-mono">
+                                        {msg.createdAt ? new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ""}
+                                      </span>
+                                    </div>
+                                  </div>
+                                );
+                              })
+                            )}
+                          </div>
+
+                          {/* Message inputs form */}
+                          <div className="flex gap-2.5 pt-1.5 border-t border-slate-900/60">
+                            <input
+                              type="text"
+                              placeholder="Escribe tu consulta para el asesor..."
+                              value={chatText}
+                              onChange={e => setChatText(e.target.value)}
+                              onKeyDown={e => {
+                                if (e.key === "Enter") {
+                                  sendChatMessage(order.id);
+                                }
+                              }}
+                              className="flex-1 bg-slate-900 border border-slate-850 rounded-xl px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-amber-500"
+                            />
+                            <button
+                              disabled={sendingChat || !chatText.trim()}
+                              onClick={() => sendChatMessage(order.id)}
+                              className="bg-amber-500 hover:bg-amber-600 disabled:bg-slate-800 disabled:text-slate-600 text-slate-950 font-black px-4 py-2 rounded-xl text-xs uppercase tracking-wider transition-colors"
+                            >
+                              Enviar
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
                   </div>
                 ))}
               </div>

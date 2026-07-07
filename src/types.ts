@@ -56,7 +56,7 @@ export interface VipAccess {
   pinLastDigits?: string; // e.g. "****" or last digit
   allowedDepartments: string[];
   sessionDurationMinutes: number;
-  status: "active" | "used" | "expired" | "blocked" | "revoked";
+  status: "active" | "used" | "expired" | "blocked" | "revoked" | "pending";
   createdAt: string;
   updatedAt: string;
   createdBy: string;
@@ -74,13 +74,15 @@ export interface VipAccess {
   lastAttemptAt?: string | null;
   notes?: string;
   whatsappLastGeneratedAt?: string;
+  clientCode?: string;
+  phoneNumber?: string;
 }
 
 export interface VipAnalyticsEvent {
   id: string;
   accessId: string;
   clientName: string;
-  eventType: "session_start" | "product_view" | "product_view_duration" | "image_click" | "whatsapp_click" | "search" | "order_created" | "session_end" | "session_expired";
+  eventType: "session_start" | "product_view" | "product_view_duration" | "image_click" | "whatsapp_click" | "search" | "order_created" | "session_end" | "session_expired" | "chat_message_sent" | "payment_reported";
   productId?: string;
   productName?: string;
   departmentId?: string;
@@ -100,10 +102,27 @@ export interface VipOrder {
     price: number;
     quantity: number;
     category: string;
+    observation?: string;
   }[];
   total: number;
-  status: "pending" | "completed" | "cancelled";
+  status: string;
   createdAt: string;
   whatsappMessage?: string;
   departmentSummary?: string;
+  finalTotal?: number | null;
+  adminNotes?: string;
+  quotedItems?: any[] | null;
+  quotedAt?: string | null;
+  quotedBy?: string | null;
+  paymentStatus?: "pendiente" | "parcial" | "pagado" | "verificación_pendiente";
+  paymentMethod?: "transferencia" | "efectivo" | "tarjeta" | "otro" | "";
+  paymentReference?: string;
+  deliveryStatus?: "preparación" | "despachado" | "entregado";
+  deliveryTrackingUrl?: string;
+  deliveryNotes?: string;
+  chat?: {
+    sender: "client" | "admin";
+    text: string;
+    createdAt: string;
+  }[];
 }

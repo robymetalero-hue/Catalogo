@@ -798,7 +798,7 @@ async function startServer() {
   // 1. VIP Client Login (Validates PIN, handles device-binding, generates session token)
   app.post("/api/vip/login", async (req, res) => {
     try {
-      const { pin, deviceInfo } = req.body;
+      const { identifier, pin, deviceInfo } = req.body;
       if (!pin) {
         return res.status(400).json({ error: "Por favor, ingresa el PIN de acceso de 3 o 4 dígitos." });
       }
@@ -826,7 +826,39 @@ async function startServer() {
         return res.status(401).json({ error: "PIN de acceso incorrecto. Por favor, verifica el PIN enviado por tu vendedor." });
       }
 
-      const accessDoc = snap.docs[0];
+      // Check identifier (clientName, clientCode, or phoneNumber)
+      const normIdentifier = (identifier || "").trim().toLowerCase();
+      let matchedDoc = null;
+
+      if (normIdentifier) {
+        for (const doc of snap.docs) {
+          const data = doc.data();
+          const name = (data.clientName || "").trim().toLowerCase();
+          const code = (data.clientCode || "").trim().toLowerCase();
+          const phone = (data.phoneNumber || "").trim().replace(/\s+/g, "");
+          const cleanPhoneInput = normIdentifier.replace(/\D/g, "");
+
+          if (
+            name === normIdentifier ||
+            name.includes(normIdentifier) ||
+            (code && code === normIdentifier) ||
+            (phone && phone.replace(/\D/g, "") === cleanPhoneInput) ||
+            (phone && phone.includes(normIdentifier))
+          ) {
+            matchedDoc = doc;
+            break;
+          }
+        }
+      } else {
+        // If no identifier provided, default to the first matching doc (backwards compatibility)
+        matchedDoc = snap.docs[0];
+      }
+
+      if (!matchedDoc) {
+        return res.status(401).json({ error: "Identificador de cliente incorrecto para este PIN VIP." });
+      }
+
+      const accessDoc = matchedDoc;
       const accessId = accessDoc.id;
       const accessData = accessDoc.data();
 
@@ -834,98 +866,119 @@ async function startServer() {
       if (accessData.status === "blocked") {
         return res.status(403).json({ error: "Este acceso VIP ha sido bloqueado por seguridad debido a demasiados intentos fallidos o actividad inusual." });
       }
-      if (accessData.status === "revoked") {
-        return res.status(403).json({ error: "Este acceso VIP ha sido cancelado o revocado por el administrador." });
-      }
-      if (accessData.status === "expired" || accessData.status === "used") {
-        return res.status(403).json({ error: "Este acceso VIP ya ha caducado y no puede volver a utilizarse." });
-      }
 
-      // Check temporal expiration (if expiresAt field is set and past)
-      if (accessData.expiresAt && new Date(accessData.expiresAt).getTime() < now) {
-        await vipCol.doc(accessId).update({ status: "expired" });
-        return res.status(403).json({ error: "Este acceso VIP ha expirado por límite de fecha." });
-      }
+      const isCatalogActive = (accessData.status === "active" || accessData.status === "pending") && 
+                              (!accessData.expiresAt || new Date(accessData.expiresAt).getTime() >= now) &&
+                              (!accessData.sessionExpiresAt || new Date(accessData.sessionExpiresAt).getTime() >= now);
 
-      // Check session expiration (if session started and time elapsed)
-      if (accessData.sessionExpiresAt && new Date(accessData.sessionExpiresAt).getTime() < now) {
-        await vipCol.doc(accessId).update({ status: "expired" });
-        return res.status(403).json({ error: "Tu tiempo de sesión VIP ha terminado. Por favor, solicita un nuevo acceso." });
-      }
-
+      const catalogAccessAllowed = isCatalogActive;
       const userAgent = req.headers["user-agent"] || "";
       const platform = deviceInfo?.platform || "web";
       const incomingDeviceToken = req.body.deviceToken;
 
-      // FIRST USE: BIND DEVICE
-      if (!accessData.firstUsedAt) {
-        const generatedToken = crypto.randomUUID();
-        const generatedTokenHash = hashDeviceToken(generatedToken);
-        const sessionDurationMinutes = accessData.sessionDurationMinutes || 30;
-        const sessionExpiresAt = new Date(now + sessionDurationMinutes * 60 * 1000).toISOString();
+      if (catalogAccessAllowed) {
+        // FIRST USE: BIND DEVICE
+        if (!accessData.firstUsedAt) {
+          const generatedToken = crypto.randomUUID();
+          const generatedTokenHash = hashDeviceToken(generatedToken);
+          const sessionDurationMinutes = accessData.sessionDurationMinutes || 30;
+          const sessionExpiresAt = new Date(now + sessionDurationMinutes * 60 * 1000).toISOString();
 
-        const updatePayload = {
-          firstUsedAt: new Date(now).toISOString(),
-          sessionStartedAt: new Date(now).toISOString(),
-          sessionExpiresAt: sessionExpiresAt,
-          deviceTokenHash: generatedTokenHash,
-          deviceInfo: {
-            userAgent: userAgent.substring(0, 200),
-            platform,
-            screenResolution: deviceInfo?.screenResolution || "unknown"
-          },
-          status: "active" as const,
-          updatedAt: new Date(now).toISOString()
-        };
+          const updatePayload = {
+            firstUsedAt: new Date(now).toISOString(),
+            sessionStartedAt: new Date(now).toISOString(),
+            sessionExpiresAt: sessionExpiresAt,
+            deviceTokenHash: generatedTokenHash,
+            deviceInfo: {
+              userAgent: userAgent.substring(0, 200),
+              platform,
+              screenResolution: deviceInfo?.screenResolution || "unknown"
+            },
+            status: "active" as const,
+            updatedAt: new Date(now).toISOString()
+          };
 
-        await vipCol.doc(accessId).update(updatePayload);
-        failedVipAttempts.delete(clientIp);
+          await vipCol.doc(accessId).update(updatePayload);
+          failedVipAttempts.delete(clientIp);
 
-        // Register initial session log
-        await firestoreDb.collection("vip_analytics").add({
-          accessId,
-          clientName: accessData.clientName,
-          eventType: "session_start",
-          timestamp: new Date(now).toISOString(),
-          metadata: { platform, ipHash: hashDeviceToken(clientIp) }
-        });
+          // Register initial session log
+          await firestoreDb.collection("vip_analytics").add({
+            accessId,
+            clientName: accessData.clientName,
+            eventType: "session_start",
+            timestamp: new Date(now).toISOString(),
+            metadata: { platform, ipHash: hashDeviceToken(clientIp) }
+          });
 
-        return res.json({
-          success: true,
-          deviceToken: generatedToken,
-          clientName: accessData.clientName,
-          allowedDepartments: accessData.allowedDepartments,
-          sessionExpiresAt,
-          accessId
-        });
+          return res.json({
+            success: true,
+            deviceToken: generatedToken,
+            clientName: accessData.clientName,
+            allowedDepartments: accessData.allowedDepartments,
+            sessionExpiresAt,
+            accessId,
+            catalogAccessAllowed: true
+          });
+        } else {
+          // RE-ENTRY / TAB REFRESH
+          if (!incomingDeviceToken) {
+            return res.status(403).json({
+              error: "Este acceso VIP ya está vinculado a otro celular o computadora. No puedes ingresar desde múltiples dispositivos."
+            });
+          }
+
+          const incomingTokenHash = hashDeviceToken(incomingDeviceToken);
+          if (accessData.deviceTokenHash !== incomingTokenHash) {
+            return res.status(403).json({
+              error: "Dispositivo no autorizado. Este PIN quedó vinculado al primer dispositivo donde se abrió. Solicita otro acceso."
+            });
+          }
+
+          // Token matches! Double check time limits
+          if (new Date(accessData.sessionExpiresAt).getTime() < now) {
+            await vipCol.doc(accessId).update({ status: "expired" });
+            return res.json({
+              success: true,
+              deviceToken: incomingDeviceToken,
+              clientName: accessData.clientName,
+              allowedDepartments: accessData.allowedDepartments,
+              sessionExpiresAt: accessData.sessionExpiresAt,
+              accessId,
+              catalogAccessAllowed: false
+            });
+          }
+
+          return res.json({
+            success: true,
+            deviceToken: incomingDeviceToken,
+            clientName: accessData.clientName,
+            allowedDepartments: accessData.allowedDepartments,
+            sessionExpiresAt: accessData.sessionExpiresAt,
+            accessId,
+            catalogAccessAllowed: true
+          });
+        }
       } else {
-        // RE-ENTRY / TAB REFRESH
-        if (!incomingDeviceToken) {
-          return res.status(403).json({
-            error: "Este acceso VIP ya está vinculado a otro celular o computadora. No puedes ingresar desde múltiples dispositivos."
-          });
-        }
+        // Catalog access is not allowed (expired, revoked, or used).
+        // But we STILL allow them to log in to see order history and messages!
+        const token = incomingDeviceToken || crypto.randomUUID();
+        const tokenHash = hashDeviceToken(token);
 
-        const incomingTokenHash = hashDeviceToken(incomingDeviceToken);
-        if (accessData.deviceTokenHash !== incomingTokenHash) {
-          return res.status(403).json({
-            error: "Dispositivo no autorizado. Este PIN quedó vinculado al primer dispositivo donde se abrió. Solicita otro acceso."
+        if (!accessData.deviceTokenHash) {
+          await vipCol.doc(accessId).update({
+            deviceTokenHash: tokenHash,
+            updatedAt: new Date(now).toISOString()
           });
-        }
-
-        // Token matches! Double check time limits
-        if (new Date(accessData.sessionExpiresAt).getTime() < now) {
-          await vipCol.doc(accessId).update({ status: "expired" });
-          return res.status(403).json({ error: "Este acceso VIP ha expirado por límite de tiempo." });
         }
 
         return res.json({
           success: true,
-          deviceToken: incomingDeviceToken,
+          deviceToken: token,
           clientName: accessData.clientName,
           allowedDepartments: accessData.allowedDepartments,
-          sessionExpiresAt: accessData.sessionExpiresAt,
-          accessId
+          sessionExpiresAt: accessData.sessionExpiresAt || new Date(now + 60*60*1000).toISOString(),
+          accessId,
+          catalogAccessAllowed: false
         });
       }
 
@@ -956,21 +1009,26 @@ async function startServer() {
       const accessData = accessDoc.data();
       const now = Date.now();
 
-      if (accessData.status !== "active") {
+      if (accessData.status === "blocked") {
         return res.json({ valid: false, reason: "inactive_status", status: accessData.status });
       }
 
-      if (new Date(accessData.sessionExpiresAt).getTime() < now) {
+      // Auto-update status to expired if session elapsed and it's still active
+      if (accessData.status === "active" && new Date(accessData.sessionExpiresAt).getTime() < now) {
         await vipCol.doc(accessId).update({ status: "expired", updatedAt: new Date().toISOString() });
-        return res.json({ valid: false, reason: "expired", status: "expired" });
+        accessData.status = "expired";
       }
+
+      const isCatalogActive = (accessData.status === "active" || accessData.status === "pending") &&
+                              (new Date(accessData.sessionExpiresAt).getTime() >= now);
 
       return res.json({
         valid: true,
         accessId,
         clientName: accessData.clientName,
         allowedDepartments: accessData.allowedDepartments,
-        sessionExpiresAt: accessData.sessionExpiresAt
+        sessionExpiresAt: accessData.sessionExpiresAt,
+        catalogAccessAllowed: isCatalogActive
       });
 
     } catch (err: any) {
@@ -1221,7 +1279,18 @@ async function startServer() {
   app.put("/api/vip/orders/:orderId", requireAdmin, async (req, res) => {
     try {
       const { orderId } = req.params;
-      const { status, adminNotes, quotedItems, finalTotal } = req.body;
+      const { 
+        status, 
+        adminNotes, 
+        quotedItems, 
+        finalTotal,
+        paymentStatus,
+        paymentMethod,
+        paymentReference,
+        deliveryStatus,
+        deliveryTrackingUrl,
+        deliveryNotes
+      } = req.body;
 
       const orderRef = firestoreDb.collection("vip_orders").doc(orderId);
       const orderSnap = await orderRef.get();
@@ -1255,6 +1324,13 @@ async function startServer() {
         updatePayload.quotedBy = "admin";
       }
 
+      if (paymentStatus !== undefined) updatePayload.paymentStatus = paymentStatus;
+      if (paymentMethod !== undefined) updatePayload.paymentMethod = paymentMethod;
+      if (paymentReference !== undefined) updatePayload.paymentReference = paymentReference;
+      if (deliveryStatus !== undefined) updatePayload.deliveryStatus = deliveryStatus;
+      if (deliveryTrackingUrl !== undefined) updatePayload.deliveryTrackingUrl = deliveryTrackingUrl;
+      if (deliveryNotes !== undefined) updatePayload.deliveryNotes = deliveryNotes;
+
       await orderRef.update(updatePayload);
 
       // Register log in analytics
@@ -1279,7 +1355,7 @@ async function startServer() {
   // 5. Admin Panel: Create VIP access config with unhashed verification checks
   app.post("/api/vip/accesses", requireAdmin, async (req, res) => {
     try {
-      const { clientName, pin, allowedDepartments, sessionDurationMinutes, notes } = req.body;
+      const { clientName, pin, allowedDepartments, sessionDurationMinutes, notes, clientCode, phoneNumber } = req.body;
       if (!clientName || !pin || !allowedDepartments || !Array.isArray(allowedDepartments) || allowedDepartments.length === 0) {
         return res.status(400).json({ error: "Parámetros obligatorios faltantes (Nombre, PIN y Departamentos)." });
       }
@@ -1322,7 +1398,9 @@ async function startServer() {
         maxFailedAttempts: 5,
         lastAttemptAt: null,
         notes: notes ? notes.trim() : "",
-        whatsappLastGeneratedAt: ""
+        whatsappLastGeneratedAt: "",
+        clientCode: clientCode ? clientCode.trim() : "",
+        phoneNumber: phoneNumber ? phoneNumber.trim() : ""
       };
 
       await firestoreDb.collection("vip_accesses").doc(id).set(newAccess);
@@ -1416,6 +1494,176 @@ async function startServer() {
     } catch (err: any) {
       console.error("Error cargando analíticas VIP:", err);
       return res.status(500).json({ error: "Fallo cargando analíticas de VIP: " + err.message });
+    }
+  });
+
+  // 10. Admin Panel: Block VIP Access
+  app.post("/api/vip/accesses/:id/block", requireAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const docRef = firestoreDb.collection("vip_accesses").doc(id);
+      const docSnap = await docRef.get();
+      if (!docSnap.exists) {
+        return res.status(404).json({ error: "Acceso VIP no encontrado." });
+      }
+      await docRef.update({
+        status: "blocked",
+        updatedAt: new Date().toISOString()
+      });
+      return res.json({ success: true });
+    } catch (err: any) {
+      return res.status(500).json({ error: "Error al bloquear: " + err.message });
+    }
+  });
+
+  // 11. Admin Panel: Unblock VIP Access
+  app.post("/api/vip/accesses/:id/unblock", requireAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const docRef = firestoreDb.collection("vip_accesses").doc(id);
+      const docSnap = await docRef.get();
+      if (!docSnap.exists) {
+        return res.status(404).json({ error: "Acceso VIP no encontrado." });
+      }
+      await docRef.update({
+        status: "active",
+        updatedAt: new Date().toISOString()
+      });
+      return res.json({ success: true });
+    } catch (err: any) {
+      return res.status(500).json({ error: "Error al desbloquear: " + err.message });
+    }
+  });
+
+  // 12. VIP Chat: Client sends message in order details
+  app.post("/api/vip/orders/:orderId/chat", async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const { deviceToken, text } = req.body;
+      if (!deviceToken || !text || !text.trim()) {
+        return res.status(400).json({ error: "Mensaje vacío o falta de token." });
+      }
+
+      const tokenHash = hashDeviceToken(deviceToken);
+      const snap = await firestoreDb.collection("vip_accesses").where("deviceTokenHash", "==", tokenHash).get();
+      if (snap.empty) {
+        return res.status(403).json({ error: "Acceso VIP no autorizado." });
+      }
+
+      const orderRef = firestoreDb.collection("vip_orders").doc(orderId);
+      const orderSnap = await orderRef.get();
+      if (!orderSnap.exists) {
+        return res.status(404).json({ error: "Pedido no encontrado." });
+      }
+
+      const orderData = orderSnap.data()!;
+      const chat = orderData.chat || [];
+      const newMessage = {
+        sender: "client" as const,
+        text: text.trim(),
+        createdAt: new Date().toISOString()
+      };
+
+      await orderRef.update({
+        chat: [...chat, newMessage],
+        updatedAt: new Date().toISOString()
+      });
+
+      // Register analytics
+      await firestoreDb.collection("vip_analytics").add({
+        accessId: orderData.accessId,
+        clientName: orderData.clientName,
+        eventType: "chat_message_sent",
+        productId: null,
+        productName: `Mensaje de chat enviado en pedido ${orderId}`,
+        timestamp: new Date().toISOString(),
+        metadata: { orderId }
+      });
+
+      return res.json({ success: true, message: newMessage });
+    } catch (err: any) {
+      return res.status(500).json({ error: "Error de servidor al enviar mensaje: " + err.message });
+    }
+  });
+
+  // 13. VIP Chat: Admin sends message in order details
+  app.post("/api/vip/orders/:orderId/chat/admin", requireAdmin, async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const { text } = req.body;
+      if (!text || !text.trim()) {
+        return res.status(400).json({ error: "Mensaje vacío." });
+      }
+
+      const orderRef = firestoreDb.collection("vip_orders").doc(orderId);
+      const orderSnap = await orderRef.get();
+      if (!orderSnap.exists) {
+        return res.status(404).json({ error: "Pedido no encontrado." });
+      }
+
+      const orderData = orderSnap.data()!;
+      const chat = orderData.chat || [];
+      const newMessage = {
+        sender: "admin" as const,
+        text: text.trim(),
+        createdAt: new Date().toISOString()
+      };
+
+      await orderRef.update({
+        chat: [...chat, newMessage],
+        updatedAt: new Date().toISOString()
+      });
+
+      return res.json({ success: true, message: newMessage });
+    } catch (err: any) {
+      return res.status(500).json({ error: "Error de servidor al enviar mensaje de admin: " + err.message });
+    }
+  });
+
+  // 14. VIP Payment: Client reports payment transfer/slip reference
+  app.post("/api/vip/orders/:orderId/report-payment", async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const { deviceToken, paymentMethod, paymentReference } = req.body;
+      if (!deviceToken || !paymentMethod || !paymentReference) {
+        return res.status(400).json({ error: "Información de pago incompleta." });
+      }
+
+      const tokenHash = hashDeviceToken(deviceToken);
+      const snap = await firestoreDb.collection("vip_accesses").where("deviceTokenHash", "==", tokenHash).get();
+      if (snap.empty) {
+        return res.status(403).json({ error: "Acceso VIP no autorizado." });
+      }
+
+      const orderRef = firestoreDb.collection("vip_orders").doc(orderId);
+      const orderSnap = await orderRef.get();
+      if (!orderSnap.exists) {
+        return res.status(404).json({ error: "Pedido no encontrado." });
+      }
+
+      const orderData = orderSnap.data()!;
+
+      await orderRef.update({
+        paymentStatus: "verificación_pendiente",
+        paymentMethod,
+        paymentReference: paymentReference.trim(),
+        updatedAt: new Date().toISOString()
+      });
+
+      // Register analytics
+      await firestoreDb.collection("vip_analytics").add({
+        accessId: orderData.accessId,
+        clientName: orderData.clientName,
+        eventType: "payment_reported",
+        productId: null,
+        productName: `Pago reportado por cliente en pedido ${orderId}`,
+        timestamp: new Date().toISOString(),
+        metadata: { orderId, paymentMethod, paymentReference }
+      });
+
+      return res.json({ success: true });
+    } catch (err: any) {
+      return res.status(500).json({ error: "Error al registrar el pago: " + err.message });
     }
   });
 

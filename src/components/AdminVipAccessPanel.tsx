@@ -29,6 +29,8 @@ export default function AdminVipAccessPanel({ products, categories }: AdminVipAc
   // Form state for creating VIP accesses
   const [clientName, setClientName] = useState("");
   const [pin, setPin] = useState("");
+  const [clientCode, setClientCode] = useState("");
+  const [phoneNumber, setPhoneNumber] = useState("");
   const [selectedDepts, setSelectedDepts] = useState<string[]>([]);
   const [sessionDuration, setSessionDuration] = useState(30);
   const [notes, setNotes] = useState("");
@@ -36,6 +38,35 @@ export default function AdminVipAccessPanel({ products, categories }: AdminVipAc
   // Last created access for showing PIN once
   const [createdAccess, setCreatedAccess] = useState<{ access: VipAccess; rawPin: string } | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  // Block / Unblock actions
+  const handleBlock = async (id: string) => {
+    setActionLoading(id);
+    try {
+      const res = await fetch(`/api/vip/accesses/${id}/block`, { method: "POST" });
+      if (!res.ok) throw new Error("Fallo al bloquear el acceso VIP.");
+      setAccesses(accesses.map(acc => acc.id === id ? { ...acc, status: "blocked" as any } : acc));
+      showMsg("Acceso VIP bloqueado correctamente.");
+    } catch (err: any) {
+      showMsg(err.message, "error");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleUnblock = async (id: string) => {
+    setActionLoading(id);
+    try {
+      const res = await fetch(`/api/vip/accesses/${id}/unblock`, { method: "POST" });
+      if (!res.ok) throw new Error("Fallo al reactivar el acceso VIP.");
+      setAccesses(accesses.map(acc => acc.id === id ? { ...acc, status: "active" as any } : acc));
+      showMsg("Acceso VIP reactivado correctamente.");
+    } catch (err: any) {
+      showMsg(err.message, "error");
+    } finally {
+      setActionLoading(null);
+    }
+  };
 
   // Analytics Modal
   const [selectedAccessForAnalytics, setSelectedAccessForAnalytics] = useState<VipAccess | null>(null);
@@ -52,6 +83,14 @@ export default function AdminVipAccessPanel({ products, categories }: AdminVipAc
   const [quoteAdminNotes, setQuoteAdminNotes] = useState("");
   const [quotedItems, setQuotedItems] = useState<any[]>([]);
   const [quoteFinalTotal, setQuoteFinalTotal] = useState(0);
+
+  // New tracking and payment states
+  const [quotePaymentStatus, setQuotePaymentStatus] = useState("pendiente");
+  const [quoteDeliveryStatus, setQuoteDeliveryStatus] = useState("preparación");
+  const [quoteDeliveryTrackingUrl, setQuoteDeliveryTrackingUrl] = useState("");
+  const [quoteDeliveryNotes, setQuoteDeliveryNotes] = useState("");
+  const [chatInputText, setChatInputText] = useState("");
+  const [sendingChat, setSendingChat] = useState(false);
 
   useEffect(() => {
     fetchAccesses();
@@ -111,6 +150,8 @@ export default function AdminVipAccessPanel({ products, categories }: AdminVipAc
         body: JSON.stringify({
           clientName: clientName.trim(),
           pin: pin.trim(),
+          clientCode: clientCode.trim(),
+          phoneNumber: phoneNumber.trim(),
           allowedDepartments: selectedDepts,
           sessionDurationMinutes: sessionDuration,
           notes: notes.trim()
@@ -128,6 +169,8 @@ export default function AdminVipAccessPanel({ products, categories }: AdminVipAc
       // Reset form
       setClientName("");
       setPin("");
+      setClientCode("");
+      setPhoneNumber("");
       setSelectedDepts([]);
       setNotes("");
       
@@ -290,6 +333,11 @@ _Nota: No compartas este enlace ni tu PIN. Una vez ingreses, tu sesión se bloqu
     setSelectedOrderForQuote(order);
     setQuoteStatus(order.status || "pendiente");
     setQuoteAdminNotes(order.adminNotes || "");
+    setQuotePaymentStatus(order.paymentStatus || "pendiente");
+    setQuoteDeliveryStatus(order.deliveryStatus || "preparación");
+    setQuoteDeliveryTrackingUrl(order.deliveryTrackingUrl || "");
+    setQuoteDeliveryNotes(order.deliveryNotes || "");
+    setChatInputText("");
     
     // Initialize quoted items with order items if not already quoted
     const items = order.quotedItems || order.items.map((i: any) => ({ ...i }));
@@ -346,7 +394,11 @@ _Nota: No compartas este enlace ni tu PIN. Una vez ingreses, tu sesión se bloqu
           status: quoteStatus,
           adminNotes: quoteAdminNotes.trim(),
           quotedItems: quotedItems,
-          finalTotal: quoteFinalTotal
+          finalTotal: quoteFinalTotal,
+          paymentStatus: quotePaymentStatus,
+          deliveryStatus: quoteDeliveryStatus,
+          deliveryTrackingUrl: quoteDeliveryTrackingUrl.trim(),
+          deliveryNotes: quoteDeliveryNotes.trim()
         })
       });
 
@@ -359,6 +411,48 @@ _Nota: No compartas este enlace ni tu PIN. Una vez ingreses, tu sesión se bloqu
       showMsg(err.message, "error");
     } finally {
       setActionLoading(null);
+    }
+  };
+
+  const sendAdminChatMessage = async (orderId: string) => {
+    if (!chatInputText.trim()) return;
+    setSendingChat(true);
+    try {
+      const res = await fetch(`/api/vip/orders/${orderId}/chat/admin`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: chatInputText.trim()
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        // Update both the selected order state and main orders list state
+        setSelectedOrderForQuote(prev => {
+          if (!prev) return null;
+          return {
+            ...prev,
+            chat: [...(prev.chat || []), data.message]
+          };
+        });
+        setVipOrders(prev => prev.map(o => {
+          if (o.id === orderId) {
+            return {
+              ...o,
+              chat: [...(o.chat || []), data.message]
+            };
+          }
+          return o;
+        }));
+        setChatInputText("");
+      } else {
+        const err = await res.json();
+        alert(err.error || "No se pudo enviar el mensaje.");
+      }
+    } catch (err: any) {
+      console.error(err);
+    } finally {
+      setSendingChat(false);
     }
   };
 
@@ -682,6 +776,137 @@ _Nota: No compartas este enlace ni tu PIN. Una vez ingreses, tu sesión se bloqu
                       </div>
                     </div>
 
+                    {/* ADVANCED ADMIN LOGISTICS & TRACKING */}
+                    <div className="bg-slate-50 border border-slate-150 rounded-2xl p-4.5 space-y-4 text-left">
+                      <div className="flex items-center gap-1.5 text-slate-700 font-extrabold text-[11px] uppercase tracking-wider">
+                        <Smartphone size={14} className="text-amber-500" />
+                        <span>Logística, Pagos y Despacho</span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-1">Estado de Pago</label>
+                          <select
+                            value={quotePaymentStatus}
+                            onChange={e => setQuotePaymentStatus(e.target.value)}
+                            className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl font-bold text-slate-700 bg-white focus:outline-none focus:border-amber-500"
+                          >
+                            <option value="pendiente">Pendiente</option>
+                            <option value="verificación_pendiente">Verificación Pendiente ⚠️</option>
+                            <option value="parcial">Pago Parcial</option>
+                            <option value="pagado">Pagado ✔️</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-1">Estado de la Entrega</label>
+                          <select
+                            value={quoteDeliveryStatus}
+                            onChange={e => setQuoteDeliveryStatus(e.target.value)}
+                            className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl font-bold text-slate-700 bg-white focus:outline-none focus:border-amber-500"
+                          >
+                            <option value="preparación">En preparación</option>
+                            <option value="despachado">Despachado / En camino 🚚</option>
+                            <option value="entregado">Entregado ✔️</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Display user reported payment info if available */}
+                      {(selectedOrderForQuote.paymentMethod || selectedOrderForQuote.paymentReference) && (
+                        <div className="bg-amber-500/5 border border-amber-500/10 rounded-xl p-3 text-xs leading-normal">
+                          <span className="font-bold text-amber-600 block text-[9px] uppercase tracking-wider mb-1">Reporte de Pago del Cliente:</span>
+                          <div className="flex justify-between text-slate-600">
+                            <span>Método: <strong className="text-slate-800 capitalize">{selectedOrderForQuote.paymentMethod}</strong></span>
+                            <span>Ref / Transacción: <strong className="font-mono text-slate-800">{selectedOrderForQuote.paymentReference}</strong></span>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="space-y-3">
+                        <div>
+                          <label className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-1">Enlace de Seguimiento (URL de la Transportadora)</label>
+                          <input
+                            type="text"
+                            placeholder="https://tracker.com/envio/12345"
+                            value={quoteDeliveryTrackingUrl}
+                            onChange={e => setQuoteDeliveryTrackingUrl(e.target.value)}
+                            className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-amber-500 bg-white"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-1">Notas internas de Despacho (Dirección, guía, detalles)</label>
+                          <textarea
+                            rows={1.5}
+                            placeholder="Ej. Servientrega Guía #1827391. Entregar en portería..."
+                            value={quoteDeliveryNotes}
+                            onChange={e => setQuoteDeliveryNotes(e.target.value)}
+                            className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-amber-500 bg-white resize-none"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* INTERACTIVE ADMIN CHAT INSIDE MODAL */}
+                    <div className="bg-slate-50 border border-slate-150 rounded-2xl p-4.5 space-y-3 text-left">
+                      <div className="flex items-center gap-1.5 text-slate-700 font-extrabold text-[11px] uppercase tracking-wider">
+                        <FileText size={14} className="text-amber-500" />
+                        <span>Chat de Soporte con Cliente</span>
+                      </div>
+
+                      <div className="max-h-36 overflow-y-auto space-y-2 p-2 bg-white border border-slate-150 rounded-xl">
+                        {(!selectedOrderForQuote.chat || selectedOrderForQuote.chat.length === 0) ? (
+                          <p className="text-[10px] text-slate-400 text-center py-4 italic">No hay mensajes. Envía un mensaje para iniciar la conversación.</p>
+                        ) : (
+                          selectedOrderForQuote.chat.map((msg: any, mIdx: number) => {
+                            const isAdmin = msg.sender === "admin";
+                            return (
+                              <div key={mIdx} className={`flex ${isAdmin ? "justify-end" : "justify-start"}`}>
+                                <div className={`max-w-[85%] rounded-2xl p-2 text-[11px] ${
+                                  isAdmin 
+                                    ? "bg-amber-500/10 border border-amber-500/20 text-slate-800 rounded-tr-none" 
+                                    : "bg-slate-100 text-slate-700 rounded-tl-none"
+                                }`}>
+                                  <span className="block text-[8px] font-extrabold uppercase tracking-wider mb-0.5 text-slate-400">
+                                    {isAdmin ? "Tú (Admin)" : "Cliente"}
+                                  </span>
+                                  <p className="leading-relaxed whitespace-pre-wrap">{msg.text}</p>
+                                  <span className="block text-[8px] text-slate-400 text-right mt-1 font-mono">
+                                    {msg.createdAt ? new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ""}
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          placeholder="Escribe un mensaje de respuesta directa..."
+                          value={chatInputText}
+                          onChange={e => setChatInputText(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              sendAdminChatMessage(selectedOrderForQuote.id);
+                            }
+                          }}
+                          className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-700 placeholder:text-slate-400 focus:outline-none focus:border-amber-500"
+                        />
+                        <button
+                          type="button"
+                          disabled={sendingChat || !chatInputText.trim()}
+                          onClick={() => sendAdminChatMessage(selectedOrderForQuote.id)}
+                          className="bg-amber-500 hover:bg-amber-600 disabled:bg-slate-200 disabled:text-slate-400 text-slate-950 font-extrabold px-3 py-2 rounded-xl text-xs uppercase tracking-wider transition-colors"
+                        >
+                          Responder
+                        </button>
+                      </div>
+                    </div>
+
                   </div>
 
                   {/* Submission Footer with Totals */}
@@ -774,7 +999,7 @@ _Nota: No compartas este enlace ni tu PIN. Una vez ingreses, tu sesión se bloqu
                       placeholder="Ej. Juan Pérez - WhatsApp"
                       value={clientName}
                       onChange={e => setClientName(e.target.value)}
-                      className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-amber-500"
+                      className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-amber-500 bg-white text-slate-800"
                     />
                   </div>
 
@@ -790,7 +1015,31 @@ _Nota: No compartas este enlace ni tu PIN. Una vez ingreses, tu sesión se bloqu
                         const val = e.target.value.replace(/\D/g, "");
                         setPin(val);
                       }}
-                      className="w-full px-3 py-2 text-xs font-mono border border-slate-200 rounded-xl focus:outline-none focus:border-amber-500"
+                      className="w-full px-3 py-2 text-xs font-mono border border-slate-200 rounded-xl focus:outline-none focus:border-amber-500 bg-white text-slate-800"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-1">Código de Cliente (Opcional)</label>
+                    <input
+                      type="text"
+                      placeholder="Ej. CLI-1029"
+                      value={clientCode}
+                      onChange={e => setClientCode(e.target.value)}
+                      className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-amber-500 bg-white text-slate-800"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-1">Celular del Cliente (Opcional)</label>
+                    <input
+                      type="text"
+                      placeholder="Ej. 099123456"
+                      value={phoneNumber}
+                      onChange={e => setPhoneNumber(e.target.value)}
+                      className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-amber-500 bg-white text-slate-800"
                     />
                   </div>
                 </div>
@@ -991,6 +1240,8 @@ _Nota: No compartas este enlace ni tu PIN. Una vez ingreses, tu sesión se bloqu
                       <tr key={acc.id} className="hover:bg-slate-50 transition-colors">
                         <td className="px-4 py-3.5">
                           <div className="font-bold text-slate-800">{acc.clientName}</div>
+                          {acc.clientCode && <div className="text-[10px] text-amber-600 font-bold mt-0.5">Código: {acc.clientCode}</div>}
+                          {acc.phoneNumber && <div className="text-[10px] text-slate-500 font-mono mt-0.5 flex items-center gap-1"><Phone size={10} /> {acc.phoneNumber}</div>}
                           {acc.notes && <div className="text-[10px] text-slate-400 font-normal italic mt-0.5">{acc.notes}</div>}
                           <div className="text-[9px] text-slate-400 font-normal mt-0.5 flex items-center gap-1">
                             <Calendar size={9} />
@@ -1041,6 +1292,30 @@ _Nota: No compartas este enlace ni tu PIN. Una vez ingreses, tu sesión se bloqu
                             <Activity size={12} className="text-amber-500" />
                             <span>Monitorear</span>
                           </button>
+
+                          {acc.status === "active" && (
+                            <button
+                              onClick={() => handleBlock(acc.id)}
+                              disabled={actionLoading === acc.id}
+                              className="p-1.5 bg-orange-500 hover:bg-orange-600 text-white rounded-lg transition-colors inline-flex items-center gap-1 text-[11px] font-semibold"
+                              title="Bloquear sesión temporalmente"
+                            >
+                              <ShieldAlert size={12} />
+                              <span>Bloquear</span>
+                            </button>
+                          )}
+
+                          {acc.status === "blocked" && (
+                            <button
+                              onClick={() => handleUnblock(acc.id)}
+                              disabled={actionLoading === acc.id}
+                              className="p-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg transition-colors inline-flex items-center gap-1 text-[11px] font-semibold"
+                              title="Desbloquear sesión"
+                            >
+                              <Check size={12} />
+                              <span>Habilitar</span>
+                            </button>
+                          )}
 
                           {acc.status === "active" && (
                             <button
