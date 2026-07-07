@@ -876,100 +876,67 @@ async function startServer() {
       const platform = deviceInfo?.platform || "web";
       const incomingDeviceToken = req.body.deviceToken;
 
+      const token = incomingDeviceToken || crypto.randomUUID();
+      const tokenHash = hashDeviceToken(token);
+
       if (catalogAccessAllowed) {
-        // FIRST USE: BIND DEVICE
+        const sessionDurationMinutes = accessData.sessionDurationMinutes || 30;
+        const sessionExpiresAt = accessData.sessionExpiresAt || new Date(now + sessionDurationMinutes * 60 * 1000).toISOString();
+
+        const updatePayload: any = {
+          deviceTokenHash: tokenHash,
+          deviceInfo: {
+            userAgent: userAgent.substring(0, 200),
+            platform,
+            screenResolution: deviceInfo?.screenResolution || "unknown"
+          },
+          updatedAt: new Date(now).toISOString()
+        };
+
         if (!accessData.firstUsedAt) {
-          const generatedToken = crypto.randomUUID();
-          const generatedTokenHash = hashDeviceToken(generatedToken);
-          const sessionDurationMinutes = accessData.sessionDurationMinutes || 30;
-          const sessionExpiresAt = new Date(now + sessionDurationMinutes * 60 * 1000).toISOString();
-
-          const updatePayload = {
-            firstUsedAt: new Date(now).toISOString(),
-            sessionStartedAt: new Date(now).toISOString(),
-            sessionExpiresAt: sessionExpiresAt,
-            deviceTokenHash: generatedTokenHash,
-            deviceInfo: {
-              userAgent: userAgent.substring(0, 200),
-              platform,
-              screenResolution: deviceInfo?.screenResolution || "unknown"
-            },
-            status: "active" as const,
-            updatedAt: new Date(now).toISOString()
-          };
-
-          await vipCol.doc(accessId).update(updatePayload);
-          failedVipAttempts.delete(clientIp);
-
-          // Register initial session log
-          await firestoreDb.collection("vip_analytics").add({
-            accessId,
-            clientName: accessData.clientName,
-            eventType: "session_start",
-            timestamp: new Date(now).toISOString(),
-            metadata: { platform, ipHash: hashDeviceToken(clientIp) }
-          });
-
-          return res.json({
-            success: true,
-            deviceToken: generatedToken,
-            clientName: accessData.clientName,
-            allowedDepartments: accessData.allowedDepartments,
-            sessionExpiresAt,
-            accessId,
-            catalogAccessAllowed: true
-          });
-        } else {
-          // RE-ENTRY / TAB REFRESH
-          if (!incomingDeviceToken) {
-            return res.status(403).json({
-              error: "Este acceso VIP ya está vinculado a otro celular o computadora. No puedes ingresar desde múltiples dispositivos."
-            });
-          }
-
-          const incomingTokenHash = hashDeviceToken(incomingDeviceToken);
-          if (accessData.deviceTokenHash !== incomingTokenHash) {
-            return res.status(403).json({
-              error: "Dispositivo no autorizado. Este PIN quedó vinculado al primer dispositivo donde se abrió. Solicita otro acceso."
-            });
-          }
-
-          // Token matches! Double check time limits
-          if (new Date(accessData.sessionExpiresAt).getTime() < now) {
-            await vipCol.doc(accessId).update({ status: "expired" });
-            return res.json({
-              success: true,
-              deviceToken: incomingDeviceToken,
-              clientName: accessData.clientName,
-              allowedDepartments: accessData.allowedDepartments,
-              sessionExpiresAt: accessData.sessionExpiresAt,
-              accessId,
-              catalogAccessAllowed: false
-            });
-          }
-
-          return res.json({
-            success: true,
-            deviceToken: incomingDeviceToken,
-            clientName: accessData.clientName,
-            allowedDepartments: accessData.allowedDepartments,
-            sessionExpiresAt: accessData.sessionExpiresAt,
-            accessId,
-            catalogAccessAllowed: true
-          });
+          updatePayload.firstUsedAt = new Date(now).toISOString();
+          updatePayload.sessionStartedAt = new Date(now).toISOString();
+          updatePayload.sessionExpiresAt = sessionExpiresAt;
+          updatePayload.status = "active";
         }
+
+        await vipCol.doc(accessId).update(updatePayload);
+        failedVipAttempts.delete(clientIp);
+
+        // Register analytics log
+        await firestoreDb.collection("vip_analytics").add({
+          accessId,
+          clientName: accessData.clientName,
+          eventType: accessData.firstUsedAt ? "session_reentry" : "session_start",
+          timestamp: new Date(now).toISOString(),
+          metadata: { platform, ipHash: hashDeviceToken(clientIp) }
+        });
+
+        return res.json({
+          success: true,
+          deviceToken: token,
+          clientName: accessData.clientName,
+          allowedDepartments: accessData.allowedDepartments,
+          sessionExpiresAt: accessData.sessionExpiresAt || sessionExpiresAt,
+          accessId,
+          catalogAccessAllowed: true
+        });
       } else {
         // Catalog access is not allowed (expired, revoked, or used).
         // But we STILL allow them to log in to see order history and messages!
-        const token = incomingDeviceToken || crypto.randomUUID();
-        const tokenHash = hashDeviceToken(token);
+        // We ALWAYS update their deviceTokenHash so they can fetch orders and chat from this device/browser!
+        const updatePayload: any = {
+          deviceTokenHash: tokenHash,
+          updatedAt: new Date(now).toISOString()
+        };
 
-        if (!accessData.deviceTokenHash) {
-          await vipCol.doc(accessId).update({
-            deviceTokenHash: tokenHash,
-            updatedAt: new Date(now).toISOString()
-          });
+        // If they had never logged in before, let's ensure status is set
+        if (!accessData.status || accessData.status === "active") {
+          updatePayload.status = "expired";
         }
+
+        await vipCol.doc(accessId).update(updatePayload);
+        failedVipAttempts.delete(clientIp);
 
         return res.json({
           success: true,
@@ -1243,10 +1210,9 @@ async function startServer() {
       const accessData = accessDoc.data();
       const now = Date.now();
 
-      // Ensure session has not expired
-      if (new Date(accessData.sessionExpiresAt).getTime() < now) {
+      // Update status to expired if session elapsed and it's still active
+      if (accessData.status === "active" && new Date(accessData.sessionExpiresAt).getTime() < now) {
         await firestoreDb.collection("vip_accesses").doc(accessId).update({ status: "expired", updatedAt: new Date().toISOString() });
-        return res.status(403).json({ error: "Sesión expirada." });
       }
 
       const ordersSnap = await firestoreDb.collection("vip_orders")
