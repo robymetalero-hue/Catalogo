@@ -827,22 +827,32 @@ async function startServer() {
       }
 
       // Check identifier (clientName, clientCode, or phoneNumber)
-      const normIdentifier = (identifier || "").trim().toLowerCase();
+      const normalizeText = (str: string): string => {
+        return (str || "")
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .toLowerCase()
+          .trim();
+      };
+
+      const normIdentifier = normalizeText(identifier);
       let matchedDoc = null;
 
       if (normIdentifier) {
         for (const doc of snap.docs) {
           const data = doc.data();
-          const name = (data.clientName || "").trim().toLowerCase();
-          const code = (data.clientCode || "").trim().toLowerCase();
+          const name = normalizeText(data.clientName);
+          const code = normalizeText(data.clientCode);
           const phone = (data.phoneNumber || "").trim().replace(/\s+/g, "");
           const cleanPhoneInput = normIdentifier.replace(/\D/g, "");
+          const cleanPhoneDb = phone.replace(/\D/g, "");
 
           if (
             name === normIdentifier ||
             name.includes(normIdentifier) ||
-            (code && code === normIdentifier) ||
-            (phone && phone.replace(/\D/g, "") === cleanPhoneInput) ||
+            normIdentifier.includes(name) ||
+            (code && (code === normIdentifier || normIdentifier.includes(code))) ||
+            (cleanPhoneInput && cleanPhoneDb && cleanPhoneDb.includes(cleanPhoneInput)) ||
             (phone && phone.includes(normIdentifier))
           ) {
             matchedDoc = doc;

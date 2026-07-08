@@ -12,6 +12,8 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import ProductCard from "./ProductCard";
 import ProductDetailsModal from "./ProductDetailsModal";
+import { db } from "../firebase";
+import { collection, query, where, orderBy, onSnapshot } from "firebase/firestore";
 
 interface VipPortalProps {
   products: Product[];
@@ -67,6 +69,10 @@ export default function VipPortal({ products, storeConfig, onBackToPublic }: Vip
   // Client Orders History
   const [myOrders, setMyOrders] = useState<any[]>([]);
   const [loadingOrders, setLoadingOrders] = useState(false);
+  const [notifications, setNotifications] = useState<any[]>([]);
+
+  const previousOrdersRef = useRef<Record<string, any>>({});
+  const isFirstLoadRef = useRef(true);
 
   // Security States
   const [isTabBlurred, setIsTabBlurred] = useState(false);
@@ -114,7 +120,7 @@ export default function VipPortal({ products, storeConfig, onBackToPublic }: Vip
 
   // Session timer ticker
   useEffect(() => {
-    if (!isAuthenticated || !sessionExpiresAt) return;
+    if (!isAuthenticated || !sessionExpiresAt || !catalogAccessAllowed) return;
 
     const interval = setInterval(() => {
       const expiry = new Date(sessionExpiresAt).getTime();
@@ -132,7 +138,7 @@ export default function VipPortal({ products, storeConfig, onBackToPublic }: Vip
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [isAuthenticated, sessionExpiresAt]);
+  }, [isAuthenticated, sessionExpiresAt, catalogAccessAllowed]);
 
   // SECURITY: Tab Blur / Visibility change detection
   useEffect(() => {
@@ -258,6 +264,121 @@ export default function VipPortal({ products, storeConfig, onBackToPublic }: Vip
       setLoadingOrders(false);
     }
   };
+
+  // Reset refs when auth state or accessId changes
+  useEffect(() => {
+    isFirstLoadRef.current = true;
+    previousOrdersRef.current = {};
+  }, [isAuthenticated, accessId]);
+
+  // Real-time listener for VIP orders
+  useEffect(() => {
+    if (!isAuthenticated || !accessId) return;
+
+    setLoadingOrders(true);
+    const q = query(
+      collection(db, "vip_orders"),
+      where("accessId", "==", accessId),
+      orderBy("createdAt", "desc")
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const currentOrders: Record<string, any> = {};
+      const ordersList: any[] = [];
+
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        currentOrders[doc.id] = data;
+        ordersList.push({ id: doc.id, ...data });
+      });
+
+      if (isFirstLoadRef.current) {
+        previousOrdersRef.current = currentOrders;
+        isFirstLoadRef.current = false;
+        setMyOrders(ordersList);
+        setLoadingOrders(false);
+        return;
+      }
+
+      const previousOrders = previousOrdersRef.current;
+
+      // Detect updates / changes
+      Object.keys(currentOrders).forEach((orderId) => {
+        const prevOrder = previousOrders[orderId];
+        const currOrder = currentOrders[orderId];
+
+        if (prevOrder) {
+          // 1. Status change detection
+          if (prevOrder.status !== currOrder.status) {
+            const notifId = `${orderId}_status_${Date.now()}`;
+            const newNotif = {
+              id: notifId,
+              orderId,
+              type: "status_change",
+              message: `¡Tu pedido ${orderId.replace("vip_ord_", "#")} cambió de estado! Ahora está "${currOrder.status.toUpperCase()}".`,
+              oldStatus: prevOrder.status,
+              newStatus: currOrder.status,
+              timestamp: Date.now()
+            };
+            setNotifications((prev) => [...prev, newNotif]);
+            
+            // Play notification sound safely
+            try {
+              const audio = new Audio("https://assets.mixkit.co/active_storage/sfx/2869/2869-600.wav");
+              audio.volume = 0.4;
+              audio.play().catch(() => {});
+            } catch (e) {}
+
+            setTimeout(() => {
+              setNotifications((prev) => prev.filter((n) => n.id !== notifId));
+            }, 8000);
+          }
+
+          // 2. Chat / Admin comments detection
+          const prevChat = prevOrder.chat || [];
+          const currChat = currOrder.chat || [];
+          const prevAdminCount = prevChat.filter((m: any) => m.sender === "admin").length;
+          const currAdminCount = currChat.filter((m: any) => m.sender === "admin").length;
+
+          if (currAdminCount > prevAdminCount) {
+            const newAdminMsgs = currChat.filter((m: any) => m.sender === "admin").slice(prevAdminCount);
+            newAdminMsgs.forEach((msg: any, idx: number) => {
+              const notifId = `${orderId}_comment_${Date.now()}_${idx}`;
+              const newNotif = {
+                id: notifId,
+                orderId,
+                type: "new_comment",
+                message: `Nuevo mensaje del administrador: "${msg.text}"`,
+                commentText: msg.text,
+                timestamp: Date.now()
+              };
+              setNotifications((prev) => [...prev, newNotif]);
+
+              // Play notification sound safely
+              try {
+                const audio = new Audio("https://assets.mixkit.co/active_storage/sfx/2869/2869-600.wav");
+                audio.volume = 0.4;
+                audio.play().catch(() => {});
+              } catch (e) {}
+
+              setTimeout(() => {
+                setNotifications((prev) => prev.filter((n) => n.id !== notifId));
+              }, 8000);
+            });
+          }
+        }
+      });
+
+      previousOrdersRef.current = currentOrders;
+      setMyOrders(ordersList);
+      setLoadingOrders(false);
+    }, (error) => {
+      console.error("Error en listener de tiempo real (VipPortal):", error);
+      setLoadingOrders(false);
+    });
+
+    return () => unsubscribe();
+  }, [isAuthenticated, accessId]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -649,6 +770,53 @@ _Enviado de forma segura e interna_ 🛡️`;
         )}
       </AnimatePresence>
 
+      {/* Real-time Order Notifications / Alerts */}
+      <div className="fixed top-20 right-4 z-50 pointer-events-none flex flex-col gap-3 max-w-sm w-full px-4 sm:px-0">
+        <AnimatePresence>
+          {notifications.map((notif) => (
+            <motion.div
+              key={notif.id}
+              initial={{ opacity: 0, x: 100, scale: 0.9 }}
+              animate={{ opacity: 1, x: 0, scale: 1 }}
+              exit={{ opacity: 0, x: 100, scale: 0.9 }}
+              className="pointer-events-auto bg-slate-900/95 border border-amber-500/40 shadow-2xl rounded-2xl p-4 flex items-start gap-3 backdrop-blur-md relative overflow-hidden"
+            >
+              {/* Highlight bar */}
+              <div className="absolute top-0 bottom-0 left-0 w-1.5 bg-amber-500" />
+              
+              <div className="flex-1 text-left pl-1.5">
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-amber-500">
+                    {notif.type === "status_change" ? "Actualización de Pedido" : "Nuevo Mensaje"}
+                  </span>
+                  <button
+                    onClick={() => setNotifications(prev => prev.filter(n => n.id !== notif.id))}
+                    className="text-slate-400 hover:text-white transition-colors cursor-pointer"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+                <p className="text-xs text-slate-200 leading-normal font-semibold">
+                  {notif.message}
+                </p>
+                <div className="mt-2 flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      setPortalTab("orders");
+                      setActiveChatOrderId(notif.orderId);
+                      setNotifications(prev => prev.filter(n => n.id !== notif.id));
+                    }}
+                    className="text-[10px] font-black text-amber-500 hover:text-amber-400 uppercase tracking-wider flex items-center gap-1 cursor-pointer transition-colors"
+                  >
+                    Ver Detalles <ExternalLink size={10} />
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
+
       {/* Watermark Overlay for Authenticated VIP Catalog */}
       {isAuthenticated && (
         <div className="fixed inset-0 pointer-events-none z-40 select-none overflow-hidden opacity-[0.02] flex flex-wrap gap-x-24 gap-y-24 justify-center items-center rotate-[-25deg] scale-125">
@@ -751,10 +919,9 @@ _Enviado de forma segura e interna_ 🛡️`;
             <form onSubmit={handleLogin} className="space-y-4 text-left">
               <div className="space-y-3">
                 <div>
-                  <label className="block text-[10px] uppercase font-extrabold text-slate-500 tracking-wider mb-1">Nombre, Celular o Código *</label>
+                  <label className="block text-[10px] uppercase font-extrabold text-slate-500 tracking-wider mb-1">Nombre, Celular o Código (Opcional)</label>
                   <input
                     type="text"
-                    required
                     placeholder="Ej: Juan Pérez, 099123456, CLI-001"
                     value={clientIdentifier}
                     onChange={e => setClientIdentifier(e.target.value)}
@@ -780,7 +947,7 @@ _Enviado de forma segura e interna_ 🛡️`;
 
               <button
                 type="submit"
-                disabled={loading || !pin || !clientIdentifier.trim()}
+                disabled={loading || !pin}
                 className="w-full bg-amber-500 hover:bg-amber-600 disabled:bg-slate-800 disabled:text-slate-600 text-slate-950 font-extrabold text-xs py-3 rounded-2xl transition-all shadow-lg shadow-amber-500/10 flex items-center justify-center gap-1.5 uppercase tracking-wider cursor-pointer"
               >
                 {loading ? (
