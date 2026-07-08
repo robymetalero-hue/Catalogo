@@ -906,14 +906,26 @@ async function startServer() {
         return res.status(403).json({ error: "Este acceso VIP ha sido bloqueado por seguridad debido a demasiados intentos fallidos o actividad inusual." });
       }
 
+      const userAgent = req.headers["user-agent"] || "";
+      const platform = deviceInfo?.platform || "web";
+      const incomingDeviceToken = req.body.deviceToken;
+
+      // SINGLE-DEVICE BINDING ENFORCEMENT:
+      // If a device is already bound (deviceTokenHash is not null/empty),
+      // the incoming deviceToken MUST hash to the exact same value.
+      if (accessData.deviceTokenHash) {
+        if (!incomingDeviceToken || hashDeviceToken(incomingDeviceToken) !== accessData.deviceTokenHash) {
+          return res.status(403).json({
+            error: "Este acceso VIP ya está vinculado y registrado en otro dispositivo por seguridad. No se permiten conexiones múltiples. Si has cambiado de dispositivo, solicita un reinicio de dispositivo a tu vendedor."
+          });
+        }
+      }
+
       const isCatalogActive = (accessData.status === "active" || accessData.status === "pending") && 
                               (!accessData.expiresAt || new Date(accessData.expiresAt).getTime() >= now) &&
                               (!accessData.sessionExpiresAt || new Date(accessData.sessionExpiresAt).getTime() >= now);
 
       const catalogAccessAllowed = isCatalogActive;
-      const userAgent = req.headers["user-agent"] || "";
-      const platform = deviceInfo?.platform || "web";
-      const incomingDeviceToken = req.body.deviceToken;
 
       const token = incomingDeviceToken || crypto.randomUUID();
       const tokenHash = hashDeviceToken(token);
@@ -1537,6 +1549,41 @@ async function startServer() {
       return res.json({ success: true });
     } catch (err: any) {
       return res.status(500).json({ error: "Error al desbloquear: " + err.message });
+    }
+  });
+
+  // 11b. Admin Panel: Reset Device Binding of VIP Access
+  app.post("/api/vip/accesses/:id/reset-device", requireAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const docRef = firestoreDb.collection("vip_accesses").doc(id);
+      const docSnap = await docRef.get();
+      if (!docSnap.exists) {
+        return res.status(404).json({ error: "Acceso VIP no encontrado." });
+      }
+      await docRef.update({
+        deviceTokenHash: null,
+        deviceInfo: null,
+        status: "active", // Reactivate status so they can log in
+        firstUsedAt: null,
+        sessionStartedAt: null,
+        sessionExpiresAt: null, // Clear expires so new duration starts from next login
+        updatedAt: new Date().toISOString()
+      });
+
+      // Log event
+      await firestoreDb.collection("vip_analytics").add({
+        accessId: id,
+        clientName: docSnap.data()?.clientName || "Cliente",
+        eventType: "session_end",
+        timestamp: new Date().toISOString(),
+        metadata: { reason: "device_reset_by_admin" }
+      });
+
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.error("Error al reiniciar dispositivo:", err);
+      return res.status(500).json({ error: "Error al reiniciar el dispositivo del acceso VIP: " + err.message });
     }
   });
 

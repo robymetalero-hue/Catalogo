@@ -70,6 +70,29 @@ export default function AdminVipAccessPanel({ products, categories, storeConfig 
     }
   };
 
+  const handleResetDevice = async (id: string) => {
+    if (!window.confirm("¿Seguro que deseas reiniciar el dispositivo de este acceso VIP? Se borrará la vinculación de su dispositivo actual y el cliente podrá volver a ingresar desde cualquier otro dispositivo único (se restablecerá también su tiempo de sesión).")) return;
+    setActionLoading(id);
+    try {
+      const res = await fetch(`/api/vip/accesses/${id}/reset-device`, { method: "POST" });
+      if (!res.ok) throw new Error("Fallo al reiniciar el dispositivo del acceso VIP.");
+      setAccesses(accesses.map(acc => acc.id === id ? { 
+        ...acc, 
+        status: "active" as any,
+        deviceTokenHash: null,
+        deviceInfo: null,
+        firstUsedAt: null,
+        sessionStartedAt: null,
+        sessionExpiresAt: null
+      } : acc));
+      showMsg("Dispositivo y límites de sesión reiniciados correctamente.");
+    } catch (err: any) {
+      showMsg(err.message, "error");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   // Analytics Modal
   const [selectedAccessForAnalytics, setSelectedAccessForAnalytics] = useState<VipAccess | null>(null);
   const [analyticsData, setAnalyticsData] = useState<{ events: VipAnalyticsEvent[]; orders: VipOrder[] } | null>(null);
@@ -1443,6 +1466,18 @@ _Nota: No compartas este enlace ni tu PIN. Una vez ingreses, tu sesión se bloqu
                             >
                               <ShieldAlert size={12} />
                               <span>Revocar</span>
+                            </button>
+                          )}
+
+                          {isDeviceBound && (
+                            <button
+                              onClick={() => handleResetDevice(acc.id)}
+                              disabled={actionLoading === acc.id}
+                              className="p-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg border border-blue-200 transition-colors inline-flex items-center gap-1 text-[11px] font-semibold"
+                              title="Reiniciar vinculación de dispositivo y restablecer sesión"
+                            >
+                              <Smartphone size={12} />
+                              <span>Reset Disp.</span>
                             </button>
                           )}
 
