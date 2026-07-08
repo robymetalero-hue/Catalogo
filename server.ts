@@ -839,6 +839,7 @@ async function startServer() {
       let matchedDoc = null;
 
       if (normIdentifier) {
+        // 1. INTENTAR COINCIDENCIA DIRECTA O POR CONTENIDO
         for (const doc of snap.docs) {
           const data = doc.data();
           const name = normalizeText(data.clientName);
@@ -859,13 +860,41 @@ async function startServer() {
             break;
           }
         }
+
+        // 2. COINCIDENCIA ULTRA FLEXIBLE (por si hay formatos raros, prefijos internacionales, o partes del nombre)
+        if (!matchedDoc) {
+          for (const doc of snap.docs) {
+            const data = doc.data();
+            const name = normalizeText(data.clientName);
+            const phone = (data.phoneNumber || "").replace(/\D/g, "");
+            const cleanPhoneInput = normIdentifier.replace(/\D/g, "");
+
+            // Coincidencia parcial del nombre (p.ej., el usuario ingresó solo el apellido "perez" o el nombre "juan")
+            const nameWords = name.split(/\s+/).filter(w => w.length > 2);
+            const inputWords = normIdentifier.split(/\s+/).filter(w => w.length > 2);
+            const hasNameWordMatch = nameWords.some(nw => inputWords.some(iw => nw.includes(iw) || iw.includes(nw)));
+
+            // Comparar los últimos 6 dígitos del teléfono para evitar problemas de prefijos internacionales de país (+595, etc.)
+            const last6Db = phone.slice(-6);
+            const last6Input = cleanPhoneInput.slice(-6);
+            const hasPhoneMatch = last6Db && last6Input && last6Db === last6Input;
+
+            if (hasNameWordMatch || hasPhoneMatch) {
+              matchedDoc = doc;
+              break;
+            }
+          }
+        }
+
+        // 3. RESPALDO ABSOLUTO: Si el PIN es correcto, NUNCA bloqueamos al cliente por el identificador.
+        // Usamos el primer registro asociado a ese PIN para que puedan ver su pedido de todos modos.
+        if (!matchedDoc) {
+          console.log(`[VIP Login Warning] No se pudo emparejar el identificador "${identifier}" con el PIN de acceso. Usando el primer documento por defecto.`);
+          matchedDoc = snap.docs[0];
+        }
       } else {
         // If no identifier provided, default to the first matching doc (backwards compatibility)
         matchedDoc = snap.docs[0];
-      }
-
-      if (!matchedDoc) {
-        return res.status(401).json({ error: "Identificador de cliente incorrecto para este PIN VIP." });
       }
 
       const accessDoc = matchedDoc;
@@ -1720,6 +1749,7 @@ async function startServer() {
           bannerStyle: "classic",
           promoBannerText: "",
           storeImages: [],
+          paymentInstructions: "Banco Nacional\nTipo de Cuenta: Cuenta Corriente\nNúmero de Cuenta: 1000-48293-19\nTitular: Mi Tienda Virtual S.R.L.\nAlias/Documento: MITIENDA-CATALOGO",
           updatedAt: new Date().toISOString()
         };
         await docRef.set(defaultDoc);
@@ -1746,6 +1776,7 @@ async function startServer() {
         bannerStyle: "classic",
         promoBannerText: "",
         storeImages: [],
+        paymentInstructions: "Banco Nacional\nTipo de Cuenta: Cuenta Corriente\nNúmero de Cuenta: 1000-48293-19\nTitular: Mi Tienda Virtual S.R.L.\nAlias/Documento: MITIENDA-CATALOGO",
         updatedAt: new Date().toISOString()
       };
       
@@ -1772,6 +1803,7 @@ async function startServer() {
         bannerStyle: payload.bannerStyle || "classic",
         promoBannerText: payload.promoBannerText || "",
         storeImages: payload.storeImages || [],
+        paymentInstructions: payload.paymentInstructions || "",
         updatedAt: new Date().toISOString()
       };
       

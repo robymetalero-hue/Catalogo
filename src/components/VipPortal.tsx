@@ -1161,6 +1161,15 @@ _Enviado de forma segura e interna_ 🛡️`;
                         </div>
                       )}
 
+                      {storeConfig.paymentInstructions && (!order.paymentStatus || order.paymentStatus === "pendiente" || order.paymentStatus === "parcial" || order.paymentStatus === "verificación_pendiente") && (
+                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 text-xs space-y-1.5 mt-2">
+                          <span className="text-[10px] text-amber-400 font-extrabold uppercase tracking-wider block">🏦 Datos de Cuenta para Pago / Transferencia:</span>
+                          <p className="text-slate-300 font-mono text-[10px] whitespace-pre-wrap leading-relaxed bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/40">
+                            {storeConfig.paymentInstructions}
+                          </p>
+                        </div>
+                      )}
+
                       {/* Client payment input triggers */}
                       {(!order.paymentStatus || order.paymentStatus === "pendiente") && (
                         <div>

@@ -9,7 +9,7 @@ import { db } from "../firebase";
 import { doc, setDoc, deleteDoc, updateDoc } from "firebase/firestore";
 import { 
   Store, Plus, Edit2, Trash2, Save, X, Eye, EyeOff, Video, Link, Check, Image as ImageIcon, Sparkles, FolderPlus, Phone, TrendingUp, ThumbsUp, BarChart2, Upload, CloudUpload, RefreshCw,
-  Database, HardDrive, AlertTriangle, CheckCircle, Shield, HelpCircle, Terminal
+  Database, HardDrive, AlertTriangle, CheckCircle, Shield, HelpCircle, Terminal, CreditCard
 } from "lucide-react";
 import { validateImageFile } from "../utils/imageUtils";
 import AdminVipAccessPanel from "./AdminVipAccessPanel";
@@ -759,6 +759,7 @@ export default function AdminPanel({
   const [promoBannerText, setPromoBannerText] = useState(storeConfig.promoBannerText || "");
   const [storeImagesList, setStoreImagesList] = useState<string[]>([""]);
   const [errorNotificationEmail, setErrorNotificationEmail] = useState(storeConfig.errorNotificationEmail || "robymetalero@gmail.com");
+  const [paymentInstructions, setPaymentInstructions] = useState(storeConfig.paymentInstructions || "");
 
   // Categories management states
   const [categoriesList, setCategoriesList] = useState<string[]>(() => {
@@ -840,6 +841,7 @@ export default function AdminPanel({
       setPromoBannerText(storeConfig.promoBannerText || "");
       setStoreImagesList(storeConfig.storeImages && storeConfig.storeImages.length > 0 ? [...storeConfig.storeImages] : [""]);
       setErrorNotificationEmail(storeConfig.errorNotificationEmail || "robymetalero@gmail.com");
+      setPaymentInstructions(storeConfig.paymentInstructions || "");
       if ((storeConfig as any).customCategories && (storeConfig as any).customCategories.length > 0) {
         setCategoriesList([...(storeConfig as any).customCategories]);
       }
@@ -1749,6 +1751,7 @@ export default function AdminPanel({
       promoBannerText: promoBannerText.trim(),
       storeImages: storeImagesList.filter(url => url.trim() !== ""),
       errorNotificationEmail: errorNotificationEmail.trim(),
+      paymentInstructions: paymentInstructions.trim(),
       updatedAt: new Date()
     };
 
@@ -3811,6 +3814,22 @@ export default function AdminPanel({
                   />
                   <span className="text-[9px] text-slate-400 block mt-0.5">
                     Designa una cuenta de correo electrónico para centralizar el envío de alertas de fallas y diagnósticos reportados por clientes y usuarios.
+                  </span>
+                </div>
+
+                <div className="pt-2 border-t border-slate-100">
+                  <div className="flex items-center gap-1.5 text-amber-600 mb-1.5">
+                    <CreditCard size={14} className="shrink-0" />
+                    <label className="block text-xs font-bold font-sans">Datos Bancarios / Instrucciones de Pago VIP</label>
+                  </div>
+                  <textarea
+                    value={paymentInstructions}
+                    onChange={(e) => setPaymentInstructions(e.target.value)}
+                    className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs focus:outline-hidden h-24 bg-white font-mono"
+                    placeholder="Escribe los datos bancarios para transferencia (Banco, Cuenta, Titular, Alias/CBU, etc.)"
+                  />
+                  <span className="text-[9px] text-slate-400 block mt-0.5">
+                    Esta información se le mostrará a los clientes VIP en el portal para que puedan realizar el pago una vez cotizado o confirmado su pedido.
                   </span>
                 </div>
               </div>

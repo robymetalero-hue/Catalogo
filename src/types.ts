@@ -17,6 +17,7 @@ export interface StoreConfig {
   promoBannerText?: string;  // Upper marquee promotion slider text
   storeImages?: string[]; // Multiple photos of the store itself
   errorNotificationEmail?: string; // Designated email address for error alerts and notifications
+  paymentInstructions?: string; // Bank transfer or other payment instructions for VIP orders
   updatedAt?: any; // Firestore Timestamp or Date ISO string
 }
 
