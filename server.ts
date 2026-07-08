@@ -1544,8 +1544,8 @@ async function startServer() {
   app.post("/api/vip/orders/:orderId/chat", async (req, res) => {
     try {
       const { orderId } = req.params;
-      const { deviceToken, text } = req.body;
-      if (!deviceToken || !text || !text.trim()) {
+      const { deviceToken, text, imageUrl } = req.body;
+      if (!deviceToken || ((!text || !text.trim()) && !imageUrl)) {
         return res.status(400).json({ error: "Mensaje vacío o falta de token." });
       }
 
@@ -1565,7 +1565,8 @@ async function startServer() {
       const chat = orderData.chat || [];
       const newMessage = {
         sender: "client" as const,
-        text: text.trim(),
+        text: (text || "").trim(),
+        imageUrl: imageUrl || undefined,
         createdAt: new Date().toISOString()
       };
 
@@ -1582,7 +1583,7 @@ async function startServer() {
         productId: null,
         productName: `Mensaje de chat enviado en pedido ${orderId}`,
         timestamp: new Date().toISOString(),
-        metadata: { orderId }
+        metadata: { orderId, hasImage: !!imageUrl }
       });
 
       return res.json({ success: true, message: newMessage });
@@ -1595,8 +1596,8 @@ async function startServer() {
   app.post("/api/vip/orders/:orderId/chat/admin", requireAdmin, async (req, res) => {
     try {
       const { orderId } = req.params;
-      const { text } = req.body;
-      if (!text || !text.trim()) {
+      const { text, imageUrl } = req.body;
+      if ((!text || !text.trim()) && !imageUrl) {
         return res.status(400).json({ error: "Mensaje vacío." });
       }
 
@@ -1610,7 +1611,8 @@ async function startServer() {
       const chat = orderData.chat || [];
       const newMessage = {
         sender: "admin" as const,
-        text: text.trim(),
+        text: (text || "").trim(),
+        imageUrl: imageUrl || undefined,
         createdAt: new Date().toISOString()
       };
 
@@ -1750,6 +1752,7 @@ async function startServer() {
           promoBannerText: "",
           storeImages: [],
           paymentInstructions: "Banco Nacional\nTipo de Cuenta: Cuenta Corriente\nNúmero de Cuenta: 1000-48293-19\nTitular: Mi Tienda Virtual S.R.L.\nAlias/Documento: MITIENDA-CATALOGO",
+          bankQrCodeUrl: "",
           updatedAt: new Date().toISOString()
         };
         await docRef.set(defaultDoc);
@@ -1777,6 +1780,7 @@ async function startServer() {
         promoBannerText: "",
         storeImages: [],
         paymentInstructions: "Banco Nacional\nTipo de Cuenta: Cuenta Corriente\nNúmero de Cuenta: 1000-48293-19\nTitular: Mi Tienda Virtual S.R.L.\nAlias/Documento: MITIENDA-CATALOGO",
+        bankQrCodeUrl: "",
         updatedAt: new Date().toISOString()
       };
       
@@ -1804,6 +1808,7 @@ async function startServer() {
         promoBannerText: payload.promoBannerText || "",
         storeImages: payload.storeImages || [],
         paymentInstructions: payload.paymentInstructions || "",
+        bankQrCodeUrl: payload.bankQrCodeUrl || "",
         updatedAt: new Date().toISOString()
       };
       

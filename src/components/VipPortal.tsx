@@ -7,7 +7,8 @@ import React, { useState, useEffect, useRef } from "react";
 import { Product, StoreConfig } from "../types";
 import { 
   Lock, ShoppingBag, Grid, Check, Smartphone, AlertCircle, X, ShieldAlert, 
-  Sparkles, Send, ArrowLeft, RefreshCw, Eye, Image as ImageIcon, Search, Trash2, Clock, Plus, Minus, ShieldCheck, FileText, ExternalLink
+  Sparkles, Send, ArrowLeft, RefreshCw, Eye, Image as ImageIcon, Search, Trash2, Clock, Plus, Minus, ShieldCheck, FileText, ExternalLink,
+  Upload, QrCode, Download
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import ProductCard from "./ProductCard";
@@ -46,6 +47,8 @@ export default function VipPortal({ products, storeConfig, onBackToPublic }: Vip
   const [activeChatOrderId, setActiveChatOrderId] = useState<string | null>(null);
   const [chatText, setChatText] = useState("");
   const [sendingChat, setSendingChat] = useState(false);
+  const [chatUploadUrl, setChatUploadUrl] = useState<string | null>(null);
+  const [uploadingChatImage, setUploadingChatImage] = useState(false);
   const [reportingPaymentOrderId, setReportingPaymentOrderId] = useState<string | null>(null);
   const [reportedPaymentMethod, setReportedPaymentMethod] = useState("transferencia");
   const [reportedPaymentRef, setReportedPaymentRef] = useState("");
@@ -473,8 +476,9 @@ export default function VipPortal({ products, storeConfig, onBackToPublic }: Vip
     setError("Tu sesión VIP de dispositivo único ha expirado. Por seguridad, el catálogo de compras se ha cerrado, pero puedes volver a ingresar con tus datos.");
   };
 
-  const sendChatMessage = async (orderId: string) => {
-    if (!chatText.trim()) return;
+  const sendChatMessage = async (orderId: string, overrideText?: string, imageUrl?: string) => {
+    const textToSend = overrideText !== undefined ? overrideText : chatText.trim();
+    if (!textToSend && !imageUrl && !chatUploadUrl) return;
     setSendingChat(true);
     try {
       const res = await fetch(`/api/vip/orders/${orderId}/chat`, {
@@ -482,7 +486,8 @@ export default function VipPortal({ products, storeConfig, onBackToPublic }: Vip
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           deviceToken,
-          text: chatText.trim()
+          text: textToSend,
+          imageUrl: imageUrl || chatUploadUrl || undefined
         })
       });
       if (res.ok) {
@@ -497,7 +502,10 @@ export default function VipPortal({ products, storeConfig, onBackToPublic }: Vip
           }
           return o;
         }));
-        setChatText("");
+        if (overrideText === undefined) {
+          setChatText("");
+          setChatUploadUrl(null);
+        }
       } else {
         const err = await res.json();
         alert(err.error || "No se pudo enviar el mensaje.");
@@ -1266,8 +1274,24 @@ _Enviado de forma segura e interna_ 🛡️`;
                                       <span className="block text-[8px] font-extrabold uppercase tracking-wider mb-0.5 text-slate-500">
                                         {isAdmin ? "Asesor VIP" : "Cliente (Tú)"}
                                       </span>
-                                      <p className="leading-relaxed whitespace-pre-wrap">{msg.text}</p>
-                                      <span className="block text-[8px] text-slate-600 text-right mt-1 font-mono">
+                                      
+                                      {msg.imageUrl && (
+                                        <div className="mb-1.5 max-w-[200px] overflow-hidden rounded-lg border border-slate-800 bg-slate-900">
+                                          <img 
+                                            src={msg.imageUrl} 
+                                            alt="Adjunto de chat" 
+                                            className="w-full h-auto object-contain max-h-[140px] cursor-pointer"
+                                            onClick={() => window.open(msg.imageUrl, '_blank')}
+                                            referrerPolicy="no-referrer"
+                                          />
+                                          <div className="bg-slate-950 p-1 text-[8px] font-bold text-slate-400 text-center uppercase tracking-wider">
+                                            📎 Imagen adjunta
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      {msg.text && <p className="leading-relaxed whitespace-pre-wrap text-slate-200">{msg.text}</p>}
+                                      <span className="block text-[8px] text-slate-500 text-right mt-1 font-mono">
                                         {msg.createdAt ? new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ""}
                                       </span>
                                     </div>
@@ -1277,26 +1301,122 @@ _Enviado de forma segura e interna_ 🛡️`;
                             )}
                           </div>
 
+                          {/* PRELOADED BANK QR QUICK LINK FOR CLIENT */}
+                          {storeConfig.bankQrCodeUrl && (
+                            <div className="bg-slate-900 border border-slate-800 rounded-xl p-2.5 flex flex-col sm:flex-row items-center justify-between gap-2.5">
+                              <div className="flex items-center gap-2">
+                                <QrCode size={20} className="text-amber-400 shrink-0" />
+                                <div className="text-left">
+                                  <p className="text-[10px] font-extrabold text-slate-200 uppercase tracking-wide">QR de Pago Oficial</p>
+                                  <p className="text-[8px] text-slate-400">Escanea o descarga este QR para realizar tu pago directo por el banco</p>
+                                </div>
+                              </div>
+                              <a 
+                                href={storeConfig.bankQrCodeUrl} 
+                                target="_blank" 
+                                rel="noopener noreferrer" 
+                                className="inline-flex items-center gap-1 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-[9px] uppercase px-3 py-1.5 rounded-lg transition-colors shadow-xs"
+                              >
+                                <Download size={10} />
+                                Descargar QR
+                              </a>
+                            </div>
+                          )}
+
+                          {/* CHAT IMAGE UPLOAD PREVIEW */}
+                          {chatUploadUrl && (
+                            <div className="flex items-center justify-between bg-slate-900 border border-slate-800 rounded-xl p-1.5 pl-2.5 gap-2">
+                              <div className="flex items-center gap-2">
+                                <img 
+                                  src={chatUploadUrl} 
+                                  alt="Adjunto cargado" 
+                                  className="w-10 h-10 object-contain rounded-md border border-slate-800 bg-slate-950"
+                                  referrerPolicy="no-referrer"
+                                />
+                                <div className="flex flex-col text-left">
+                                  <span className="text-[10px] font-extrabold text-slate-200 uppercase tracking-wide">Comprobante / Imagen cargada</span>
+                                  <span className="text-[8px] text-slate-500">Se enviará como prueba junto al mensaje</span>
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setChatUploadUrl(null)}
+                                className="p-1 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded-lg transition-colors"
+                              >
+                                <X size={14} />
+                              </button>
+                            </div>
+                          )}
+
                           {/* Message inputs form */}
-                          <div className="flex gap-2.5 pt-1.5 border-t border-slate-900/60">
+                          <div className="flex gap-2 pt-1.5 border-t border-slate-900/60 items-center">
+                            {/* CUSTOM FILE UPLOADER FOR CLIENT CHAT */}
+                            <div className="relative shrink-0">
+                              <input
+                                type="file"
+                                accept="image/*"
+                                id={`client-chat-file-input-${order.id}`}
+                                disabled={uploadingChatImage || sendingChat}
+                                onChange={async (e) => {
+                                  const file = e.target.files?.[0];
+                                  if (!file) return;
+                                  setUploadingChatImage(true);
+                                  try {
+                                    const formData = new FormData();
+                                    formData.append("files", file);
+                                    const res = await fetch("/api/upload", {
+                                      method: "POST",
+                                      body: formData
+                                    });
+                                    if (!res.ok) throw new Error("Fallo de subida");
+                                    const data = await res.json();
+                                    if (data.urls && data.urls.length > 0) {
+                                      setChatUploadUrl(data.urls[0]);
+                                    }
+                                  } catch (err) {
+                                    alert("No se pudo cargar el comprobante para el chat.");
+                                  } finally {
+                                    setUploadingChatImage(false);
+                                  }
+                                }}
+                                className="hidden"
+                              />
+                              <button
+                                type="button"
+                                disabled={uploadingChatImage || sendingChat}
+                                onClick={() => document.getElementById(`client-chat-file-input-${order.id}`)?.click()}
+                                className={`p-2 border rounded-xl hover:bg-slate-900 text-slate-400 hover:text-slate-100 transition-colors flex items-center justify-center shrink-0 h-9 w-9 ${
+                                  uploadingChatImage ? "border-amber-500 bg-amber-500/10 animate-pulse text-amber-500" : "border-slate-800 bg-slate-900"
+                                }`}
+                                title="Subir comprobante de pago o imagen"
+                              >
+                                {uploadingChatImage ? (
+                                  <RefreshCw size={14} className="animate-spin" />
+                                ) : (
+                                  <ImageIcon size={14} />
+                                )}
+                              </button>
+                            </div>
+
                             <input
                               type="text"
-                              placeholder="Escribe tu consulta para el asesor..."
+                              placeholder={uploadingChatImage ? "Subiendo archivo..." : "Escribe tu consulta para el asesor..."}
                               value={chatText}
                               onChange={e => setChatText(e.target.value)}
+                              disabled={uploadingChatImage}
                               onKeyDown={e => {
                                 if (e.key === "Enter") {
                                   sendChatMessage(order.id);
                                 }
                               }}
-                              className="flex-1 bg-slate-900 border border-slate-850 rounded-xl px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-amber-500"
+                              className="flex-1 bg-slate-900 border border-slate-850 rounded-xl px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-amber-500 h-9"
                             />
                             <button
-                              disabled={sendingChat || !chatText.trim()}
+                              disabled={sendingChat || uploadingChatImage || (!chatText.trim() && !chatUploadUrl)}
                               onClick={() => sendChatMessage(order.id)}
-                              className="bg-amber-500 hover:bg-amber-600 disabled:bg-slate-800 disabled:text-slate-600 text-slate-950 font-black px-4 py-2 rounded-xl text-xs uppercase tracking-wider transition-colors"
+                              className="bg-amber-500 hover:bg-amber-600 disabled:bg-slate-900 disabled:text-slate-600 text-slate-950 font-black px-4 py-2 rounded-xl text-xs uppercase tracking-wider transition-colors shrink-0 h-9"
                             >
-                              Enviar
+                              {sendingChat ? "Enviando..." : "Enviar"}
                             </button>
                           </div>
                         </div>

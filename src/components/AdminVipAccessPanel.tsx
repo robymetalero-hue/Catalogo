@@ -8,15 +8,17 @@ import { VipAccess, VipAnalyticsEvent, VipOrder, Product } from "../types";
 import { 
   Plus, Trash2, Copy, Check, ExternalLink, Clock, Shield, ShieldAlert, Users, 
   ShoppingBag, Eye, Activity, Phone, Settings, AlertCircle, Calendar, 
-  TrendingUp, BarChart2, X, AlertTriangle, Play, RefreshCw, Smartphone, FileText, CheckCircle, Edit, DollarSign
+  TrendingUp, BarChart2, X, AlertTriangle, Play, RefreshCw, Smartphone, FileText, CheckCircle, Edit, DollarSign,
+  Upload, Image as ImageIcon, QrCode
 } from "lucide-react";
 
 interface AdminVipAccessPanelProps {
   products: Product[];
   categories: string[];
+  storeConfig?: any;
 }
 
-export default function AdminVipAccessPanel({ products, categories }: AdminVipAccessPanelProps) {
+export default function AdminVipAccessPanel({ products, categories, storeConfig }: AdminVipAccessPanelProps) {
   // Navigation Tabs inside VIP Admin
   const [activeSection, setActiveSection] = useState<"accesses" | "orders">("orders");
 
@@ -91,6 +93,8 @@ export default function AdminVipAccessPanel({ products, categories }: AdminVipAc
   const [quoteDeliveryNotes, setQuoteDeliveryNotes] = useState("");
   const [chatInputText, setChatInputText] = useState("");
   const [sendingChat, setSendingChat] = useState(false);
+  const [chatUploadUrl, setChatUploadUrl] = useState<string | null>(null);
+  const [uploadingChatImage, setUploadingChatImage] = useState(false);
 
   useEffect(() => {
     fetchAccesses();
@@ -414,15 +418,17 @@ _Nota: No compartas este enlace ni tu PIN. Una vez ingreses, tu sesión se bloqu
     }
   };
 
-  const sendAdminChatMessage = async (orderId: string) => {
-    if (!chatInputText.trim()) return;
+  const sendAdminChatMessage = async (orderId: string, overrideText?: string, imageUrl?: string) => {
+    const textToSend = overrideText !== undefined ? overrideText : chatInputText.trim();
+    if (!textToSend && !imageUrl && !chatUploadUrl) return;
     setSendingChat(true);
     try {
       const res = await fetch(`/api/vip/orders/${orderId}/chat/admin`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          text: chatInputText.trim()
+          text: textToSend,
+          imageUrl: imageUrl || chatUploadUrl || undefined
         })
       });
       if (res.ok) {
@@ -444,7 +450,10 @@ _Nota: No compartas este enlace ni tu PIN. Una vez ingreses, tu sesión se bloqu
           }
           return o;
         }));
-        setChatInputText("");
+        if (overrideText === undefined) {
+          setChatInputText("");
+          setChatUploadUrl(null);
+        }
       } else {
         const err = await res.json();
         alert(err.error || "No se pudo enviar el mensaje.");
@@ -871,7 +880,21 @@ _Nota: No compartas este enlace ni tu PIN. Una vez ingreses, tu sesión se bloqu
                                   <span className="block text-[8px] font-extrabold uppercase tracking-wider mb-0.5 text-slate-400">
                                     {isAdmin ? "Tú (Admin)" : "Cliente"}
                                   </span>
-                                  <p className="leading-relaxed whitespace-pre-wrap">{msg.text}</p>
+                                  {msg.imageUrl && (
+                                    <div className="mb-1.5 max-w-[200px] overflow-hidden rounded-lg border border-slate-200 bg-white">
+                                      <img 
+                                        src={msg.imageUrl} 
+                                        alt="Adjunto de chat" 
+                                        className="w-full h-auto object-contain max-h-[140px] cursor-pointer"
+                                        onClick={() => window.open(msg.imageUrl, '_blank')}
+                                        referrerPolicy="no-referrer"
+                                      />
+                                      <div className="bg-slate-50 p-1 text-[8px] font-bold text-slate-500 text-center uppercase tracking-wider">
+                                        📎 Imagen adjunta
+                                      </div>
+                                    </div>
+                                  )}
+                                  {msg.text && <p className="leading-relaxed whitespace-pre-wrap">{msg.text}</p>}
                                   <span className="block text-[8px] text-slate-400 text-right mt-1 font-mono">
                                     {msg.createdAt ? new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ""}
                                   </span>
@@ -882,27 +905,121 @@ _Nota: No compartas este enlace ni tu PIN. Una vez ingreses, tu sesión se bloqu
                         )}
                       </div>
 
-                      <div className="flex gap-2">
+                      {/* CHAT ACTIONS: SHARE BANK QR */}
+                      <div className="flex flex-wrap items-center justify-between gap-1.5 border-t border-slate-100 pt-2">
+                        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Acciones rápidas:</span>
+                        {storeConfig?.bankQrCodeUrl ? (
+                          <button
+                            type="button"
+                            onClick={() => sendAdminChatMessage(selectedOrderForQuote.id, "Estimado cliente, aquí tiene nuestro Código QR oficial para realizar su depósito o transferencia bancaria rápida:", storeConfig.bankQrCodeUrl)}
+                            className="inline-flex items-center gap-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 font-extrabold text-[9px] uppercase px-2.5 py-1 rounded-lg transition-colors border border-amber-500/20"
+                            title="Compartir el QR de banco configurado"
+                          >
+                            <QrCode size={10} />
+                            Compartir QR de Banco
+                          </button>
+                        ) : (
+                          <span className="text-[9px] text-slate-400 bg-slate-100 px-2 py-0.5 rounded-lg font-medium">
+                            Sin QR de banco configurado
+                          </span>
+                        )}
+                      </div>
+
+                      {/* CHAT IMAGE UPLOAD PREVIEW */}
+                      {chatUploadUrl && (
+                        <div className="flex items-center justify-between bg-amber-50/50 border border-amber-200/60 rounded-xl p-1.5 pl-2.5 gap-2">
+                          <div className="flex items-center gap-2">
+                            <img 
+                              src={chatUploadUrl} 
+                              alt="Adjunto cargado" 
+                              className="w-10 h-10 object-contain rounded-md border border-slate-200 bg-white"
+                              referrerPolicy="no-referrer"
+                            />
+                            <div className="flex flex-col">
+                              <span className="text-[10px] font-extrabold text-slate-700 uppercase tracking-wide">Imagen seleccionada</span>
+                              <span className="text-[8px] text-slate-400">Se enviará junto al mensaje</span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setChatUploadUrl(null)}
+                            className="p-1 hover:bg-amber-100 text-slate-400 hover:text-amber-700 rounded-lg transition-colors"
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      )}
+
+                      <div className="flex gap-1.5 items-center">
+                        {/* CUSTOM FILE UPLOADER FOR CHAT */}
+                        <div className="relative shrink-0">
+                          <input
+                            type="file"
+                            accept="image/*"
+                            id="admin-chat-file-input"
+                            disabled={uploadingChatImage || sendingChat}
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              setUploadingChatImage(true);
+                              try {
+                                const formData = new FormData();
+                                formData.append("files", file);
+                                const res = await fetch("/api/upload", {
+                                  method: "POST",
+                                  body: formData
+                                });
+                                if (!res.ok) throw new Error("Fallo de subida");
+                                const data = await res.json();
+                                if (data.urls && data.urls.length > 0) {
+                                  setChatUploadUrl(data.urls[0]);
+                                }
+                              } catch (err) {
+                                alert("No se pudo cargar la imagen para el chat.");
+                              } finally {
+                                setUploadingChatImage(false);
+                              }
+                            }}
+                            className="hidden"
+                          />
+                          <button
+                            type="button"
+                            disabled={uploadingChatImage || sendingChat}
+                            onClick={() => document.getElementById("admin-chat-file-input")?.click()}
+                            className={`p-2 border rounded-xl hover:bg-slate-100 text-slate-500 hover:text-slate-800 transition-colors flex items-center justify-center shrink-0 h-9 w-9 ${
+                              uploadingChatImage ? "border-amber-400 bg-amber-50 animate-pulse text-amber-600" : "border-slate-200 bg-white"
+                            }`}
+                            title="Subir imagen/comprobante"
+                          >
+                            {uploadingChatImage ? (
+                              <RefreshCw size={14} className="animate-spin" />
+                            ) : (
+                              <ImageIcon size={14} />
+                            )}
+                          </button>
+                        </div>
+
                         <input
                           type="text"
-                          placeholder="Escribe un mensaje de respuesta directa..."
+                          placeholder={uploadingChatImage ? "Cargando imagen..." : "Escribe un mensaje de respuesta directa..."}
                           value={chatInputText}
                           onChange={e => setChatInputText(e.target.value)}
+                          disabled={uploadingChatImage}
                           onKeyDown={e => {
                             if (e.key === "Enter") {
                               e.preventDefault();
                               sendAdminChatMessage(selectedOrderForQuote.id);
                             }
                           }}
-                          className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-700 placeholder:text-slate-400 focus:outline-none focus:border-amber-500"
+                          className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-700 placeholder:text-slate-400 focus:outline-none focus:border-amber-500 h-9"
                         />
                         <button
                           type="button"
-                          disabled={sendingChat || !chatInputText.trim()}
+                          disabled={sendingChat || uploadingChatImage || (!chatInputText.trim() && !chatUploadUrl)}
                           onClick={() => sendAdminChatMessage(selectedOrderForQuote.id)}
-                          className="bg-amber-500 hover:bg-amber-600 disabled:bg-slate-200 disabled:text-slate-400 text-slate-950 font-extrabold px-3 py-2 rounded-xl text-xs uppercase tracking-wider transition-colors"
+                          className="bg-amber-500 hover:bg-amber-600 disabled:bg-slate-200 disabled:text-slate-400 text-slate-950 font-extrabold px-3.5 py-2 rounded-xl text-xs uppercase tracking-wider transition-colors shrink-0 h-9"
                         >
-                          Responder
+                          {sendingChat ? "Enviando..." : "Responder"}
                         </button>
                       </div>
                     </div>

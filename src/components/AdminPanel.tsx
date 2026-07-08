@@ -9,7 +9,7 @@ import { db } from "../firebase";
 import { doc, setDoc, deleteDoc, updateDoc } from "firebase/firestore";
 import { 
   Store, Plus, Edit2, Trash2, Save, X, Eye, EyeOff, Video, Link, Check, Image as ImageIcon, Sparkles, FolderPlus, Phone, TrendingUp, ThumbsUp, BarChart2, Upload, CloudUpload, RefreshCw,
-  Database, HardDrive, AlertTriangle, CheckCircle, Shield, HelpCircle, Terminal, CreditCard
+  Database, HardDrive, AlertTriangle, CheckCircle, Shield, HelpCircle, Terminal, CreditCard, QrCode
 } from "lucide-react";
 import { validateImageFile } from "../utils/imageUtils";
 import AdminVipAccessPanel from "./AdminVipAccessPanel";
@@ -760,6 +760,8 @@ export default function AdminPanel({
   const [storeImagesList, setStoreImagesList] = useState<string[]>([""]);
   const [errorNotificationEmail, setErrorNotificationEmail] = useState(storeConfig.errorNotificationEmail || "robymetalero@gmail.com");
   const [paymentInstructions, setPaymentInstructions] = useState(storeConfig.paymentInstructions || "");
+  const [bankQrCodeUrl, setBankQrCodeUrl] = useState(storeConfig.bankQrCodeUrl || "");
+  const [uploadingQr, setUploadingQr] = useState(false);
 
   // Categories management states
   const [categoriesList, setCategoriesList] = useState<string[]>(() => {
@@ -842,6 +844,7 @@ export default function AdminPanel({
       setStoreImagesList(storeConfig.storeImages && storeConfig.storeImages.length > 0 ? [...storeConfig.storeImages] : [""]);
       setErrorNotificationEmail(storeConfig.errorNotificationEmail || "robymetalero@gmail.com");
       setPaymentInstructions(storeConfig.paymentInstructions || "");
+      setBankQrCodeUrl(storeConfig.bankQrCodeUrl || "");
       if ((storeConfig as any).customCategories && (storeConfig as any).customCategories.length > 0) {
         setCategoriesList([...(storeConfig as any).customCategories]);
       }
@@ -1752,6 +1755,7 @@ export default function AdminPanel({
       storeImages: storeImagesList.filter(url => url.trim() !== ""),
       errorNotificationEmail: errorNotificationEmail.trim(),
       paymentInstructions: paymentInstructions.trim(),
+      bankQrCodeUrl: bankQrCodeUrl.trim(),
       updatedAt: new Date()
     };
 
@@ -3832,6 +3836,89 @@ export default function AdminPanel({
                     Esta información se le mostrará a los clientes VIP en el portal para que puedan realizar el pago una vez cotizado o confirmado su pedido.
                   </span>
                 </div>
+
+                <div className="pt-2 border-t border-slate-100">
+                  <div className="flex items-center gap-1.5 text-amber-600 mb-1.5">
+                    <QrCode size={14} className="shrink-0" />
+                    <label className="block text-xs font-bold font-sans">QR de Pago Precargado (Banco)</label>
+                  </div>
+                  
+                  {bankQrCodeUrl ? (
+                    <div className="flex items-center gap-3 bg-white p-2.5 border border-slate-200 rounded-xl">
+                      <img 
+                        src={bankQrCodeUrl} 
+                        alt="QR de Pago" 
+                        className="w-16 h-16 object-contain rounded-lg border border-slate-100 bg-slate-50"
+                        referrerPolicy="no-referrer"
+                      />
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[10px] font-bold text-slate-700 truncate max-w-[180px]">Código QR Cargado</span>
+                        <div className="flex gap-1.5">
+                          <a 
+                            href={bankQrCodeUrl} 
+                            target="_blank" 
+                            rel="noopener noreferrer" 
+                            className="text-[10px] text-amber-600 font-bold hover:underline"
+                          >
+                            Ver Imagen
+                          </a>
+                          <span className="text-slate-300">•</span>
+                          <button
+                            type="button"
+                            onClick={() => setBankQrCodeUrl("")}
+                            className="text-[10px] text-red-500 font-bold hover:underline"
+                          >
+                            Eliminar
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="border border-dashed border-slate-300 hover:border-amber-400 bg-amber-50/5 hover:bg-amber-50/15 p-3 rounded-xl transition-all relative flex flex-col items-center justify-center text-center h-[90px] overflow-hidden">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          setUploadingQr(true);
+                          try {
+                            const formData = new FormData();
+                            formData.append("files", file);
+                            const res = await fetch("/api/upload", {
+                              method: "POST",
+                              body: formData
+                            });
+                            if (!res.ok) throw new Error("Error al subir");
+                            const data = await res.json();
+                            if (data.urls && data.urls.length > 0) {
+                              setBankQrCodeUrl(data.urls[0]);
+                              showToast("QR de Pago subido exitosamente", "success");
+                            }
+                          } catch (err) {
+                            showToast("No se pudo subir la imagen QR", "error");
+                          } finally {
+                            setUploadingQr(false);
+                          }
+                        }}
+                        disabled={uploadingQr}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                      />
+                      <div className="flex flex-col items-center pointer-events-none">
+                        <Upload size={14} className={`mb-1 ${uploadingQr ? "animate-bounce text-amber-600" : "text-amber-500"}`} />
+                        <span className="text-[10px] font-bold text-slate-700 uppercase tracking-wide">
+                          {uploadingQr ? "Subiendo QR..." : "Subir Imagen QR del Banco"}
+                        </span>
+                        <span className="text-[8px] text-slate-400 mt-0.5">
+                          Imagen cuadrada PNG o JPG para pagos rápidos
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                  <span className="text-[9px] text-slate-400 block mt-1">
+                    Este QR estará disponible en el chat de soporte para enviarlo al cliente VIP con un solo clic.
+                  </span>
+                </div>
               </div>
             </div>
           </div>
@@ -4700,7 +4787,7 @@ export default function AdminPanel({
           )}
         </div>
       ) : activeTab === "vip" ? (
-        <AdminVipAccessPanel products={products} categories={categoriesList} />
+        <AdminVipAccessPanel products={products} categories={categoriesList} storeConfig={storeConfig} />
       ) : null}
     </div>
   );

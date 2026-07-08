@@ -18,6 +18,7 @@ export interface StoreConfig {
   storeImages?: string[]; // Multiple photos of the store itself
   errorNotificationEmail?: string; // Designated email address for error alerts and notifications
   paymentInstructions?: string; // Bank transfer or other payment instructions for VIP orders
+  bankQrCodeUrl?: string; // Bank QR code URL for VIP quick checkout
   updatedAt?: any; // Firestore Timestamp or Date ISO string
 }
 
@@ -125,5 +126,6 @@ export interface VipOrder {
     sender: "client" | "admin";
     text: string;
     createdAt: string;
+    imageUrl?: string;
   }[];
 }
